@@ -1,34 +1,32 @@
 #!/usr/bin/env python
 
 """
-    pytorch-hypergrad-simple.py
+    pytorch-hypergrad-optimizer.py
 """
 
 import numpy as np
 
 import torch
-from torch import optim
-from torch.optim.optimizer import Optimizer
-from torch import autograd
 from torch import nn
-from torch.autograd import Variable
+from torch import optim
+from torch import autograd
 from torch.nn import Parameter
-
-from rsub import *
-from matplotlib import pyplot as plt
+from torch.autograd import Variable
+from torch.nn import functional as F
+from torch.optim.optimizer import Optimizer
 
 # --
 # Helpers
 
 class HSGD(Optimizer):
     # """ stripped down torch default, but w/ signs flipped to match hypergrad """
-    def __init__(self, params, lrs, momentums, num_iters):
+    def __init__(self, params, lrs, momentums, num_epochs):
         super(HSGD, self).__init__(params, {
             "lrs" : lrs,
             "momentums" : momentums,
         })
-        self.d_lrs       = torch.zeros(num_iters).double().cuda()
-        self.d_momentums = torch.zeros(num_iters).double().cuda()
+        self.d_lrs       = torch.zeros(num_epochs).double()
+        self.d_momentums = torch.zeros(num_epochs).double()
         
     def step(self, i):
         for group in self.param_groups:
@@ -53,7 +51,7 @@ class HSGD(Optimizer):
                 _ = param_state['X'].add(lr * param_state['V'].val)
                 param.data.set_(param_state['X'].val)
     
-    def unstep(self, lf, i=0):
+    def unstep(self, loss_fun, i=0):
         for group in self.param_groups:
             
             momentum = torch.DoubleTensor([group['momentums'][i]])
@@ -64,10 +62,10 @@ class HSGD(Optimizer):
                 param_state = self.state[param]
                 
                 if 'd_x' not in param_state:
-                    param_state['d_x'] = autograd.grad(lf(), param)[0].data
+                    param_state['d_x'] = autograd.grad(loss_fun(), param)[0].data
                 
                 if 'grad_proj_x' not in param_state:
-                    param_state['grad_proj_x'] = lambda x, d: (autograd.grad(lf(), x, create_graph=True)[0] * d).sum()
+                    param_state['grad_proj_x'] = lambda x, d: (autograd.grad(loss_fun(), x, create_graph=True)[0] * d).sum()
                 
                 if 'd_v' not in param_state:
                     param_state['d_v'] = torch.zeros(param.size()).double()
@@ -80,14 +78,14 @@ class HSGD(Optimizer):
             # Update velocities in all layers
             for param in group['params']:
                 param_state = self.state[param]
-                g = autograd.grad(lf(), param)[0].data
+                g = autograd.grad(loss_fun(), param)[0].data
                 _ = param_state['V'].add(g).div(momentum)
                 
                 param_state['d_v'] += param_state['d_x'] * lr
                 
                 self.d_momentums[i] += (param_state['d_v'] * param_state['V'].val).sum()
                 
-                d_vpar = Parameter(param_state['d_v'], requires_grad=True)
+                d_vpar = Parameter(param_state['d_v'])
                 param_state['d_x'] -= autograd.grad(param_state['grad_proj_x'](param, d_vpar), param)[0].data
                 
                 param_state['d_v'] = param_state['d_v'] * momentum
@@ -97,71 +95,47 @@ class HSGD(Optimizer):
 
 np.random.seed(456)
 
-def loss_fun(X, y):
-    return ((X - y) ** 2).mean()
+num_epochs = 20
+input_dim = 6
 
-num_iters = 50
-batch_size = 10
-input_dim  = 10
+lrs        = 0.1 + np.zeros(num_epochs)
+momentums  = 0.9 + np.zeros(num_epochs)
 
-lrs        = 0.1 + np.zeros(num_iters)
-momentums  = 0.9 + np.zeros(num_iters)
-
-truth = torch.rand((10, 5))
-X = torch.LongTensor(np.random.choice(10, 1000))
-y = truth[X]
-
-data = Variable(X)
-y = Variable(y).double()
+data = Variable(torch.ones((1, 1))).double()
+y    = Variable(torch.DoubleTensor(np.random.uniform(0, 1, input_dim))).view(1, -1)
 
 all_loss = []
-for meta_epoch in range(25):
-    # Initialize model
-    
-    l = nn.Embedding(10, 5).double()
-    orig = l.weight.data.numpy().copy()
+for _ in range(25):
+    # Initialize model    
+    l = nn.Linear(1, input_dim, bias=False)
     
     # sgd
     loss_hist = []
-    opt = HSGD(l.parameters(), lrs, momentums, num_iters=num_iters)
-    for i in range(num_iters):
-        np.random.seed((123, meta_epoch, i))
-        batch = torch.LongTensor(np.random.choice(data.size(0), batch_size))
+    opt = HSGD(l.parameters(), lrs, momentums, num_epochs=num_epochs)
+    for i in range(num_epochs):
         opt.zero_grad()
-        pred = l(data[batch])
-        loss = loss_fun(pred, y[batch])
+        pred = net(data)
+        loss = F.mse_loss(pred, y)
         loss.backward()
         opt.step(i)
         
-        loss_hist.append(loss_fun(l(data), y).data[0])
+        loss_hist.append(F.mse_loss(net(data), y).data[0])
     
     all_loss.append(loss_hist)
     
     # Trained weights
     trained = l.weight.data.numpy().copy()
     
-    # hypersgd        
-    for i in range(num_iters)[::-1]:
-        # np.random.seed((123, meta_epoch, i))
-        # batch = torch.LongTensor(np.random.choice(data.size(0), batch_size))
-        def lf():
-            return loss_fun(l(data), y)
-            
+    # hypersgd
+    def lf():
+        return F.mse_loss(net(data), y)
+        
+    for i in range(num_epochs)[::-1]:
         opt.unstep(lf, i)
         
     untrained = l.weight.data.numpy().copy()
     assert np.all(untrained == orig)
     
-    lrs -= opt.d_lrs.numpy()
-    momentums -= opt.d_momentums.numpy()
+    lrs -= 0.1 * opt.d_lrs.numpy()
+    momentums -= 0.1 * opt.d_momentums.numpy()
     print all_loss[-1][-1]
-
-
-# all_loss = np.vstack(all_loss)
-
-# _ = plt.plot(all_loss[:,-1])
-# show_plot()
-
-
-# _ = plt.plot(lrs)
-# show_plot()

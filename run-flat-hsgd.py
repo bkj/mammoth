@@ -18,6 +18,8 @@ from hypergrad.data import load_data_dicts
 from rsub import *
 from matplotlib import pyplot as plt
 
+from helpers import to_numpy
+
 # --
 # IO
 
@@ -40,13 +42,6 @@ y_val = valid_data['T'].argmax(axis=1)
 # Helpers
 
 logit = lambda x: 1 / (1 + (-x).exp())
-
-def to_numpy(x):
-    if isinstance(x, Variable):
-        return to_numpy(x.data)
-    
-    return x.cpu().numpy() if x.is_cuda else x.numpy()
-
 
 def make_net(layers=[50, 50, 50]):
     

@@ -20,7 +20,6 @@ num_epochs = 100
 parser = VectorParser()
 parser.add_shape('first',  [6,])
 parser.add_shape('second', [1,])
-# parser.add_shape('third',  [3,])
 N_weight_types = 1
 
 # --
