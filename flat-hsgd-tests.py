@@ -29,9 +29,9 @@ def to_numpy(x):
     return x.cpu().numpy() if x.is_cuda else x.numpy()
 
 
-def make_net(layers=[25, 25, 25]):
+def make_net(layers=[50, 50, 50]):
     
-    net = nn.Sequential(
+    return nn.Sequential(
         nn.Linear(784, layers[0]),
         nn.Tanh(),
         nn.Linear(layers[0], layers[1]),
@@ -39,23 +39,16 @@ def make_net(layers=[25, 25, 25]):
         nn.Linear(layers[1], layers[2]),
         nn.Tanh(),
         nn.Linear(layers[2], 10)
-    )
+    ).double()
     
-    for child in net.children():
-        if isinstance(child, nn.Linear):
-            _ = child.weight.data.normal_(0, np.exp(-3))
-            
-    net = net.double()
-    return net
 
 # --
 # Train
 
-batch_size  = 128
-# N_iters     = 1500
-N_iters     = 250
+batch_size  = 200
+N_iters     = 100
 N_classes   = 10
-N_train     = 50000
+N_train     = 10000
 N_valid     = 10000
 N_tests     = 10000
 
@@ -67,12 +60,14 @@ y_train = train_data['T']
 X_val = Variable(torch.DoubleTensor(valid_data['X'])).cuda()
 y_val = valid_data['T'].argmax(axis=1)
 
+
 def deterministic_batch(X, y, seed, batch_size=batch_size):
     np.random.seed(seed)
     sel = np.random.choice(X.shape[0], batch_size)
     X, y = X[sel], y[sel].argmax(axis=1)
     X, y = Variable(torch.DoubleTensor(X)).cuda(), Variable(torch.LongTensor(y)).cuda()
     return X, y
+
 
 def train(net, opt, N_iters, seed=0):
     hist, val_hist = [], []
@@ -105,27 +100,23 @@ def untrain(net, opt, N_iters, seed=0):
     
     return opt
 
-# --
-# Run
 
-# lrs = torch.DoubleTensor(np.full((N_iters, 8), 0.3)).cuda()
-# momentums = torch.DoubleTensor(np.full((N_iters, 8), 0.5)).cuda()
+logit = lambda x: 1 / (1 + (-x).exp())
 
-lrs = np.full(N_iters, 0.3)
-momentums = np.full(N_iters, 0.5)
-
-all_hists = []
-for meta_epoch in range(10):
-    _ = torch.manual_seed(234)
-    _ = torch.cuda.manual_seed(234)
+def meta_iter(meta_epoch, seed=None):
+    if seed:
+        _ = torch.manual_seed(seed)
+        _ = torch.cuda.manual_seed(seed)
     
     net = make_net().cuda()
     
-    opt = FlatHSGD(
-        net.parameters(),
-        lrs=lrs,
-        momentums=momentums,
-        num_iters=N_iters,
+    for child in net.children():
+        if isinstance(child, nn.Linear):
+            _ = child.weight.data.normal_(0, np.exp(-3))
+    
+    opt = FlatHSGD(net.parameters(), 
+        lrs=lrs.exp(), 
+        momentums=logit(momentums), 
         cuda=True
     )
     
@@ -135,35 +126,61 @@ for meta_epoch in range(10):
     opt, val_hist = train(net, opt, N_iters, seed=meta_epoch)
     trained_weights = to_numpy(opt._get_flat_params())
     print 'final acc=%f' % val_hist[-1]
-    all_hists.append(val_hist)
     
     # Untrain
     opt = untrain(net, opt, N_iters, seed=meta_epoch)
     untrained_weights = to_numpy(opt._get_flat_params())
     assert(np.all(orig_weights == untrained_weights))
     
-    # Update hyperparameters
-    lrs -= 0.1 * to_numpy(opt.d_lrs)
-    momentums -= 0.1 * to_numpy(opt.d_momentums)
+    return opt, val_hist
 
+# --
+# Run
 
-for h in np.vstack(all_hists):
-    _ = plt.plot(h, alpha=0.25)
+meta_epochs = 100
 
-show_plot()
+# !! Should be parameterized on the log scale
+lrs = torch.DoubleTensor(np.full((N_iters, 8), -1)).cuda()
+momentums = torch.DoubleTensor(np.full((N_iters, 8), 0)).cuda()
 
+b1 = 0.1
+b2 = 0.01
+eps = 10**-4
+lam = 10**-4
+step_size = 0.05
 
-_ = plt.plot(lrs)
-show_plot()
+m = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(momentums.size()).double().cuda()]
+v = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(momentums.size()).double().cuda()]
 
-
-opt = FlatHSGD(
-    net.parameters(), 
-    lrs=lrs,
-    momentums=momentums, 
-    num_iters=N_iters, 
-    cuda=True
-)
-z = torch.FloatTensor([0.1] * len(opt._params))
-opt._fill_parser(z)
-
+all_hists = []
+for meta_epoch in range(meta_epochs):
+    
+    b1t = 1 - (1 - b1) * (lam ** meta_epoch)
+    opt, val_hist = meta_iter(meta_epoch, seed=None)
+    all_hists.append(val_hist)
+    
+    g = opt.d_lrs * lrs.exp() # !! Is this right?
+    m[0] = b1t * g + (1-b1t) * m[0]
+    v[0] = b2 * (g ** 2) + (1 - b2) * v[0]
+    mhat = m[0] / (1 - (1 - b1) ** (meta_epoch + 1))
+    vhat = v[0] / (1 - (1 - b2) ** (meta_epoch + 1))
+    lrs -= step_size * mhat / (vhat.sqrt() + eps)
+    
+    g = opt.d_momentums * momentums.exp() / ((1 + momentums.exp()) ** 2) # !! Is this right?
+    m[1] = b1t * g + (1-b1t) * m[0]
+    v[1] = b2 * (g ** 2) + (1 - b2) * v[1]
+    mhat = m[1] / (1 - (1 - b1) ** (meta_epoch + 1))
+    vhat = v[1] / (1 - (1 - b2) ** (meta_epoch + 1))
+    momentums -= step_size * mhat / (vhat.sqrt() + eps)
+    
+    # for l in to_numpy(momentums[:,::2]).T:
+    #     _ = plt.plot(1 / (1 + np.exp(-l)), alpha=0.5)
+    for l in to_numpy(lrs[:,::2]).T:
+        _ = plt.plot(np.exp(l), alpha=0.5)
+        
+    show_plot()
+    
+    for h in all_hists:
+        _ = plt.plot(h, alpha=0.5)
+        
+    show_plot()

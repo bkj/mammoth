@@ -17,7 +17,9 @@ class FlatHSGD(Optimizer):
             self.d_lrs = self.d_lrs.cuda()
             self.d_momentums = self.d_momentums.cuda()
         
-        self._params = self.param_groups[0]['params']
+        self._params  = self.param_groups[0]['params']
+        self._szs     = [np.prod(p.size()) for p in self._params]
+        self._offsets = [0] + list(np.cumsum(self._szs))[:-1]
         self._numel_cache = None
         
         for p in self._params:
@@ -51,10 +53,10 @@ class FlatHSGD(Optimizer):
         assert offset == self._numel()
     
     def _fill_parser(self, vals):
-        assert len(vals) == len(self._params)
+        assert len(vals) == len(self._szs)
         views = []
-        for p in self._params:
-            view = vals.index(0).expand_as(p.view(-1))
+        for i, s in enumerate(self._szs):
+            view = vals.index(i).repeat(s)
             views.append(view)
         
         return torch.cat(views, 0)
@@ -121,8 +123,8 @@ class FlatHSGD(Optimizer):
                 param_state['d_v'] = param_state['d_v'].cuda()
         
         # Update learning rate
-        
-        self.d_lrs[i] += (param_state['d_x'] * param_state['V'].val).sum()
+        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
+            self.d_lrs[i,j] = (param_state['d_x'][offset:(offset+sz)] * param_state['V'].val[offset:(offset+sz)]).sum()
         
         # Reverse SGD exactly
         _ = param_state['X'].sub(lr * param_state['V'].val)
@@ -132,12 +134,12 @@ class FlatHSGD(Optimizer):
         
         # Update momentum
         param_state['d_v'] += param_state['d_x'] * lr
-        self.d_momentums[i] += (param_state['d_v'] * param_state['V'].val).sum()
+        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
+            self.d_momentums[i,j] = (param_state['d_v'][offset:(offset+sz)] * param_state['V'].val[offset:(offset+sz)]).sum()
         
         # Update gradient
         d_vpar = Parameter(param_state['d_v'], requires_grad=True)
-        g2 = (self._flatten(autograd.grad(lf(), self._params, create_graph=True)) * d_vpar).sum()
-        param_state['d_x'] -= self._flatten(autograd.grad(g2, self._params)).data
+        param_state['d_x'] -= self._flatten(autograd.grad((self._flatten(autograd.grad(lf(), self._params, create_graph=True)) * d_vpar).sum(), self._params)).data
         
         param_state['d_v'] = param_state['d_v'] * momentum
 
