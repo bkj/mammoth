@@ -1,3 +1,13 @@
+#!/usr/bin/env python
+
+"""
+    flat_hsgd.py
+    
+    HSGD, implemented by flattening the layers
+    
+    Could very likely be sped up
+"""
+
 from torch.nn import Parameter
 from torch import autograd
 from torch.optim.optimizer import Optimizer
