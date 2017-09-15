@@ -3,14 +3,14 @@ from torch import autograd
 from torch.optim.optimizer import Optimizer
 
 class FlatHSGD(Optimizer):
-    def __init__(self, params, lrs, momentums, cuda=False):
+    def __init__(self, params, lrs, momentums, num_iters, cuda=False):
         super(FlatHSGD, self).__init__(params, {
             "lrs" : lrs,
             "momentums" : momentums,
         })
-        
-        self.d_lrs = lrs.clone().zero_()
-        self.d_momentums = momentums.clone().zero_()
+        self.d_lrs       = torch.zeros(num_iters).double()
+        self.d_momentums = torch.zeros(num_iters).double()
+        self.num_iters   = num_iters
         
         self.cuda = cuda
         if self.cuda:
@@ -40,7 +40,7 @@ class FlatHSGD(Optimizer):
             views.append(view)
         
         return torch.cat(views, 0)
-    
+        
     def _set_flat_params(self, val):
         offset = 0
         for p in self._params:
@@ -49,15 +49,6 @@ class FlatHSGD(Optimizer):
             offset += numel
         
         assert offset == self._numel()
-    
-    def _fill_parser(self, vals):
-        assert len(vals) == len(self._params)
-        views = []
-        for p in self._params:
-            view = vals.index(0).expand_as(p.view(-1))
-            views.append(view)
-        
-        return torch.cat(views, 0)
     
     def _get_flat_grads(self):
         views = []
@@ -76,8 +67,8 @@ class FlatHSGD(Optimizer):
     
     def step(self, i):
         group = self.param_groups[0]
-        lr = self._fill_parser(group['lrs'][i])
-        momentum = self._fill_parser(group['momentums'][i])
+        momentum = torch.DoubleTensor([group['momentums'][i]])
+        lr = torch.DoubleTensor([group['lrs'][i]])
         
         if self.cuda:
             momentum = momentum.cuda()
