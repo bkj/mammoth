@@ -50,10 +50,10 @@ class FlatHSGD(Optimizer):
             p.data.set_(val[offset:offset + numel].view_as(p.data))
             offset += numel
         
-        assert offset == self._numel()
+        assert offset == self._numel(), 'FlatHSGD._set_flat_params: offset != self._numel()'
     
     def _fill_parser(self, vals):
-        assert len(vals) == len(self._szs)
+        assert len(vals) == len(self._szs), 'FlatHSGD._fill_parser: len(vals) != len(self._szs)'
         views = []
         for i, s in enumerate(self._szs):
             view = vals.index(i).repeat(s)
@@ -139,7 +139,8 @@ class FlatHSGD(Optimizer):
         
         # Update gradient
         d_vpar = Parameter(param_state['d_v'], requires_grad=True)
-        param_state['d_x'] -= self._flatten(autograd.grad((self._flatten(autograd.grad(lf(), self._params, create_graph=True)) * d_vpar).sum(), self._params)).data
+        g2 = (self._flatten(autograd.grad(lf(), self._params, create_graph=True)) * d_vpar).sum()
+        param_state['d_x'] -= self._flatten(autograd.grad(g2, self._params)).data
         
         param_state['d_v'] = param_state['d_v'] * momentum
 

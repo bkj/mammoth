@@ -31,7 +31,7 @@ def to_numpy(x):
 
 def make_net(layers=[50, 50, 50]):
     
-    return nn.Sequential(
+    net = nn.Sequential(
         nn.Linear(784, layers[0]),
         nn.Tanh(),
         nn.Linear(layers[0], layers[1]),
@@ -39,14 +39,20 @@ def make_net(layers=[50, 50, 50]):
         nn.Linear(layers[1], layers[2]),
         nn.Tanh(),
         nn.Linear(layers[2], 10)
-    ).double()
+    )
     
+    for child in net.children():
+        if isinstance(child, nn.Linear):
+            _ = child.weight.data.normal_(0, np.exp(-3))
+            
+    net = net.double()
+    return net
 
 # --
 # Train
 
 batch_size  = 200
-N_iters     = 100
+N_iters     = 25
 N_classes   = 10
 N_train     = 10000
 N_valid     = 10000
@@ -110,13 +116,9 @@ def meta_iter(meta_epoch, seed=None):
     
     net = make_net().cuda()
     
-    for child in net.children():
-        if isinstance(child, nn.Linear):
-            _ = child.weight.data.normal_(0, np.exp(-3))
-    
-    opt = FlatHSGD(net.parameters(), 
-        lrs=lrs.exp(), 
-        momentums=logit(momentums), 
+    opt = FlatHSGD(net.parameters(),
+        lrs=lrs.exp(),
+        momentums=logit(momentums),
         cuda=True
     )
     
@@ -130,7 +132,7 @@ def meta_iter(meta_epoch, seed=None):
     # Untrain
     opt = untrain(net, opt, N_iters, seed=meta_epoch)
     untrained_weights = to_numpy(opt._get_flat_params())
-    assert(np.all(orig_weights == untrained_weights))
+    assert np.all(orig_weights == untrained_weights), 'meta_iter: orig_weights != untrained_weights'
     
     return opt, val_hist
 
@@ -147,7 +149,7 @@ b1 = 0.1
 b2 = 0.01
 eps = 10**-4
 lam = 10**-4
-step_size = 0.05
+step_size = 0.01
 
 m = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(momentums.size()).double().cuda()]
 v = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(momentums.size()).double().cuda()]
@@ -159,7 +161,7 @@ for meta_epoch in range(meta_epochs):
     opt, val_hist = meta_iter(meta_epoch, seed=None)
     all_hists.append(val_hist)
     
-    g = opt.d_lrs * lrs.exp() # !! Is this right?
+    g = opt.d_lrs * lrs.exp() # !! Is this right
     m[0] = b1t * g + (1-b1t) * m[0]
     v[0] = b2 * (g ** 2) + (1 - b2) * v[0]
     mhat = m[0] / (1 - (1 - b1) ** (meta_epoch + 1))
