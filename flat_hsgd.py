@@ -120,28 +120,20 @@ class FlatHSGD(Optimizer):
         group = self.param_groups[0]
         lr = self._fill_parser(group['lrs'][i])
         momentum = self._fill_parser(group['momentums'][i])
-        # print 'momentum', to_numpy(momentum).sum()
         
         # Initialize parameters
         param_state = self.state['flat']
-        # print 'd_x', to_numpy(param_state['d_x'])
-        # print 'V', to_numpy(param_state['V'].val)
         
         # Update learning rate
         for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
             self.d_lrs[i,j] = (param_state['d_x'][offset:(offset+sz)] * param_state['V'].val[offset:(offset+sz)]).sum()
         
-        # print 'd_lrs', to_numpy(self.d_lrs[i])
-        
         # Reverse SGD exactly
         _ = param_state['X'].sub(lr * param_state['V'].val)
         self._set_flat_params(param_state['X'].val)
-        # print 'X', to_numpy(self._get_flat_params())
         
         g1 = self._flatten(autograd.grad(lf(), self._params)).data
-        # print 'g1', to_numpy(g1)
         _ = param_state['V'].add(g1).div(momentum)
-        # print 'V update', to_numpy(param_state['V'].val)
         
         # Update momentum
         param_state['d_v'] += param_state['d_x'] * lr
@@ -154,5 +146,3 @@ class FlatHSGD(Optimizer):
         param_state['d_x'] -= self._flatten(autograd.grad(g2, self._params)).data
         
         param_state['d_v'] = param_state['d_v'] * momentum
-        # print
-

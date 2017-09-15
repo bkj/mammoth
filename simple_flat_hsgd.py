@@ -8,8 +8,8 @@
     !! Needs to be tested
 """
 
-from torch.nn import Parameter
 from torch import autograd
+from torch.nn import Parameter
 from torch.optim.optimizer import Optimizer
 
 from exact_reps import *
@@ -31,7 +31,7 @@ class SimpleFlatHSGD(Optimizer):
         
         self.d_lrs = lrs.clone().zero_()
         self.d_mos = mos.clone().zero_()
-        self.d_v = torch.zeros(self._numel()).double()
+        self.d_v   = torch.zeros(self._numel()).double()
         if self.cuda:
             self.d_v = self.d_v.cuda()
 

@@ -152,12 +152,13 @@ class EBitStoreCUDA(object):
     """
         Efficiently stores information with non-integer number of bits (up to 16).
     """
+    MAX_VALUE = 2 ** 63 - 1
     def __init__(self, size):
         if len(size) > 1:
             self.store = np.array([[0L] * size[1]] * size[0], dtype=object)
         else:
-            self.store = np.array([0L] * size[0], dtype=object)
-        
+            self.store =  np.array([0L] * size[0], dtype=object)
+            
     def push(self, N, M):
         """Stores integer N, given that 0 <= N < M"""
         assert torch.le(M, 2 ** 16).all(), 'EBitStoreCUDA.push: M > 2 ** 16'
@@ -166,6 +167,7 @@ class EBitStoreCUDA(object):
         
     def pop(self, M):
         """Retrieves the last integer stored."""
-        N = self.store % to_numpy(M)
-        self.store /= to_numpy(M)
+        m = to_numpy(M)
+        N = self.store % m
+        self.store /= m
         return torch.LongTensor(N).cuda()

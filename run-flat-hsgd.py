@@ -18,6 +18,7 @@ from torch.nn import functional as F
 from torch.autograd import Variable
 
 from hypergrad.data import load_data_dicts
+from hypergrad.util import RandomState
 
 from rsub import *
 from matplotlib import pyplot as plt
@@ -47,6 +48,19 @@ y_val = valid_data['T'].argmax(axis=1)
 # Helpers
 
 logit = lambda x: 1 / (1 + (-x).exp())
+d_logit = lambda x: x.exp() / ((1 + x.exp()) ** 2)
+d_exp = lambda x: x.exp()
+
+def set_net_weights(net, val):
+    offset = 0
+    for p in net.parameters():
+        numel = p.numel()
+        if len(p.size()) == 1:
+            p.data.set_(val[offset:offset + numel].view_as(p.data))
+        else:
+            p.data.set_(val[offset:offset + numel].view_as(p.data.t()).t()) # !! autograd ordering
+        offset += numel
+    print offset
 
 def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
     
@@ -57,7 +71,8 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
         nn.Tanh(),
         nn.Linear(layers[1], layers[2]),
         nn.Tanh(),
-        nn.Linear(layers[2], 10)
+        nn.Linear(layers[2], 10),
+        nn.LogSoftmax(),
     )
     
     for child in net.children():
@@ -68,17 +83,18 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
     return net
 
 
-def deterministic_batch(X, y, seed, batch_size=batch_size):
-    np.random.seed(seed)
-    sel = torch.LongTensor(np.random.choice(X.size(0), batch_size)).cuda()
-    X, y = X[sel], y[sel]
+def deterministic_batch(X, y, sgd_iter, meta_iter, seed=0, batch_size=batch_size):
+    rs = RandomState((seed, meta_iter, sgd_iter))
+    idxs = rs.randint(X.size(0), size=batch_size)
+    idxs = torch.LongTensor(idxs).cuda()
+    X, y = X[idxs], y[idxs]
     return X, y
 
 
-def train(net, opt, num_iters, seed=0):
+def train(net, opt, num_iters, meta_iter, seed=0):
     train_hist, val_hist = [], []
     for i in tqdm(range(num_iters)):
-        X, y = deterministic_batch(X_train, y_train, seed=(seed, i))
+        X, y = deterministic_batch(X_train, y_train, sgd_iter=i, meta_iter=meta_iter, seed=0)
         
         opt.zero_grad()
         scores = net(X)
@@ -96,9 +112,9 @@ def train(net, opt, num_iters, seed=0):
     return opt, val_hist, train_hist
 
 
-def untrain(net, opt, num_iters, seed=0):
+def untrain(net, opt, num_iters, meta_iter, seed=0):
     for i in tqdm(range(num_iters)[::-1]):
-        X, y = deterministic_batch(X_train, y_train, seed=(seed, i))
+        X, y = deterministic_batch(X_train, y_train, sgd_iter=i, meta_iter=meta_iter, seed=0)
         
         def lf():
             return F.cross_entropy(net(X), y)
@@ -108,12 +124,8 @@ def untrain(net, opt, num_iters, seed=0):
     return opt
 
 
-def meta_iter(meta_epoch, seed=None):
-    if seed:
-        _ = torch.manual_seed(seed)
-        _ = torch.cuda.manual_seed(seed)
-    
-    net = make_net().cuda()
+def do_meta_iter(meta_iter):
+    net = make_net(weight_scale=np.exp(-3)).cuda()
     
     opt = FlatHSGD(net.parameters(),
         lrs=lrs.exp(),
@@ -124,15 +136,21 @@ def meta_iter(meta_epoch, seed=None):
     orig_weights = to_numpy(opt._get_flat_params())
     
     # Train
-    opt, val_hist, train_hist = train(net, opt, num_iters, seed=meta_epoch)
+    opt, val_hist, train_hist = train(net, opt, num_iters=num_iters, meta_iter=meta_iter, seed=0)
     trained_weights = to_numpy(opt._get_flat_params())
     print {
         "train_acc" : train_hist[-1],
         "val_acc" : val_hist[-1]
     }
     
+    # Init untrain
+    def lf_all():
+        return F.cross_entropy(net(X_train), y_train)
+    
+    opt.init_backwards(lf_all)
+    
     # Untrain
-    opt = untrain(net, opt, num_iters, seed=meta_epoch)
+    opt = untrain(net, opt, num_iters, meta_iter)
     untrained_weights = to_numpy(opt._get_flat_params())
     assert np.all(orig_weights == untrained_weights), 'meta_iter: orig_weights != untrained_weights'
     
@@ -141,41 +159,42 @@ def meta_iter(meta_epoch, seed=None):
 # --
 # Run
 
-meta_epochs = 100
-
 lrs = torch.DoubleTensor(np.full((num_iters, 8), -1.0)).cuda()
 momentums = torch.DoubleTensor(np.full((num_iters, 8), 0.0)).cuda()
+
+meta_iters = 50
 
 b1 = 0.1
 b2 = 0.01
 eps = 10 ** -4
 lam = 10 ** -4
-step_size = 0.02
+step_size = 0.01
 
 m = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(momentums.size()).double().cuda()]
 v = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(momentums.size()).double().cuda()]
 
 all_val_hists, all_train_hists = [], []
-for meta_epoch in range(meta_epochs):
-    print "\nmeta_epoch=%d" % meta_epoch
+for meta_iter in range(meta_iters):
+    print "\nmeta_iter=%d" % meta_iter
     
-    opt, val_hist, train_hist = meta_iter(meta_epoch, seed=None)
+    opt, val_hist, train_hist = do_meta_iter(meta_iter)
     all_train_hists.append(train_hist)
     all_val_hists.append(val_hist)
     
     # ADAM step -- need to apply to all hypergrads
-    b1t = 1 - (1 - b1) * (lam ** meta_epoch)
+    b1t = 1 - (1 - b1) * (lam ** meta_iter)
     
-    g = opt.d_lrs * lrs.exp() # !! Is this right
+    g = opt.d_lrs * d_exp(lrs) # !!
     m[0] = b1t * g + (1-b1t) * m[0]
     v[0] = b2 * (g ** 2) + (1 - b2) * v[0]
-    mhat = m[0] / (1 - (1 - b1) ** (meta_epoch + 1))
-    vhat = v[0] / (1 - (1 - b2) ** (meta_epoch + 1))
+    mhat = m[0] / (1 - (1 - b1) ** (meta_iter + 1))
+    vhat = v[0] / (1 - (1 - b2) ** (meta_iter + 1))
     lrs -= step_size * mhat / (vhat.sqrt() + eps)
     
-    g = opt.d_momentums * momentums.exp() / ((1 + momentums.exp()) ** 2) # !! Is this right?
-    m[1] = b1t * g + (1-b1t) * m[0]
+    g = opt.d_momentums * d_logit(momentums) # !!
+    m[1] = b1t * g + (1-b1t) * m[1]
     v[1] = b2 * (g ** 2) + (1 - b2) * v[1]
-    mhat = m[1] / (1 - (1 - b1) ** (meta_epoch + 1))
-    vhat = v[1] / (1 - (1 - b2) ** (meta_epoch + 1))
+    mhat = m[1] / (1 - (1 - b1) ** (meta_iter + 1))
+    vhat = v[1] / (1 - (1 - b2) ** (meta_iter + 1))
     momentums -= step_size * mhat / (vhat.sqrt() + eps)
+
