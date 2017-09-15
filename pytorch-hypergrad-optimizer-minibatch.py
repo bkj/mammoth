@@ -22,13 +22,13 @@ from matplotlib import pyplot as plt
 
 class HSGD(Optimizer):
     # """ stripped down torch default, but w/ signs flipped to match hypergrad """
-    def __init__(self, params, lrs, momentums, num_epochs):
+    def __init__(self, params, lrs, momentums, num_iters):
         super(HSGD, self).__init__(params, {
             "lrs" : lrs,
             "momentums" : momentums,
         })
-        self.d_lrs       = torch.zeros(num_epochs).double()
-        self.d_momentums = torch.zeros(num_epochs).double()
+        self.d_lrs       = torch.zeros(num_iters).double().cuda()
+        self.d_momentums = torch.zeros(num_iters).double().cuda()
         
     def step(self, i):
         for group in self.param_groups:
@@ -100,12 +100,12 @@ np.random.seed(456)
 def loss_fun(X, y):
     return ((X - y) ** 2).mean()
 
-num_epochs = 50
+num_iters = 50
 batch_size = 10
 input_dim  = 10
 
-lrs        = 0.1 + np.zeros(num_epochs)
-momentums  = 0.9 + np.zeros(num_epochs)
+lrs        = 0.1 + np.zeros(num_iters)
+momentums  = 0.9 + np.zeros(num_iters)
 
 truth = torch.rand((10, 5))
 X = torch.LongTensor(np.random.choice(10, 1000))
@@ -123,8 +123,8 @@ for meta_epoch in range(25):
     
     # sgd
     loss_hist = []
-    opt = HSGD(l.parameters(), lrs, momentums, num_epochs=num_epochs)
-    for i in range(num_epochs):
+    opt = HSGD(l.parameters(), lrs, momentums, num_iters=num_iters)
+    for i in range(num_iters):
         np.random.seed((123, meta_epoch, i))
         batch = torch.LongTensor(np.random.choice(data.size(0), batch_size))
         opt.zero_grad()
@@ -141,7 +141,7 @@ for meta_epoch in range(25):
     trained = l.weight.data.numpy().copy()
     
     # hypersgd        
-    for i in range(num_epochs)[::-1]:
+    for i in range(num_iters)[::-1]:
         # np.random.seed((123, meta_epoch, i))
         # batch = torch.LongTensor(np.random.choice(data.size(0), batch_size))
         def lf():

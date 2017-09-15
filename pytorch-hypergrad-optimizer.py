@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-    pytorch-hypergrad-simple.py
+    pytorch-hypergrad-optimizer.py
 """
 
 import numpy as np
