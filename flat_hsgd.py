@@ -25,9 +25,7 @@ class FlatHSGD(Optimizer):
         self.d_momentums = momentums.clone().zero_()
         
         self.cuda = cuda
-        if self.cuda:
-            self.d_lrs = self.d_lrs.cuda()
-            self.d_momentums = self.d_momentums.cuda()
+        self.etensor = ETensorCUDA if cuda else ETensor
         
         self._params  = self.param_groups[0]['params']
         self._szs     = [np.prod(p.size()) for p in self._params]
@@ -50,7 +48,7 @@ class FlatHSGD(Optimizer):
                 # view = p.to_dense().view(-1)
                 raise NotImplemented
             else:
-                view = p.view(-1)
+                view = p.contiguous().view(-1)
             views.append(view)
         
         return torch.cat(views, 0)
@@ -88,6 +86,10 @@ class FlatHSGD(Optimizer):
         
         return torch.cat(views, 0)
     
+    def _flatten(self, x):
+        # !! This isn't going to support sparse layers
+        return torch.cat([xx.contiguous().view(-1) for xx in x])
+    
     def step(self, i):
         group = self.param_groups[0]
         lr = self._fill_parser(group['lrs'][i])
@@ -95,6 +97,7 @@ class FlatHSGD(Optimizer):
         
         flat_params = self._get_flat_params()
         flat_grad = self._get_flat_grads()
+        # print to_numpy(flat_grad)
         
         param_state = self.state['flat']
         
@@ -114,35 +117,39 @@ class FlatHSGD(Optimizer):
         _ = param_state['X'].add(lr * param_state['V'].val)
         self._set_flat_params(param_state['X'].val)
     
-    def _flatten(self, x):
-        # !! This isn't going to support sparse layers
-        return torch.cat([xx.contiguous().view(-1) for xx in x])
-    
+    def init_backwards(self, lf):
+        param_state = self.state['flat']
+        param_state['d_x'] = self._flatten(autograd.grad(lf(), self._params)).data
+        param_state['d_v'] = torch.zeros(self._numel()).double()
+        if self.cuda:
+            param_state['d_v'] = param_state['d_v'].cuda()
+            
     def unstep(self, lf, i=0):
         group = self.param_groups[0]
         lr = self._fill_parser(group['lrs'][i])
         momentum = self._fill_parser(group['momentums'][i])
+        # print 'momentum', to_numpy(momentum).sum()
         
         # Initialize parameters
         param_state = self.state['flat']
-        
-        if 'd_x' not in param_state:
-            param_state['d_x'] = self._flatten(autograd.grad(lf(), self._params)).data
-                
-        if 'd_v' not in param_state:
-            param_state['d_v'] = torch.zeros(self._numel()).double()
-            if self.cuda:
-                param_state['d_v'] = param_state['d_v'].cuda()
+        # print 'd_x', to_numpy(param_state['d_x'])
+        # print 'V', to_numpy(param_state['V'].val)
         
         # Update learning rate
         for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
             self.d_lrs[i,j] = (param_state['d_x'][offset:(offset+sz)] * param_state['V'].val[offset:(offset+sz)]).sum()
         
+        # print 'd_lrs', to_numpy(self.d_lrs[i])
+        
         # Reverse SGD exactly
         _ = param_state['X'].sub(lr * param_state['V'].val)
         self._set_flat_params(param_state['X'].val)
+        # print 'X', to_numpy(self._get_flat_params())
+        
         g1 = self._flatten(autograd.grad(lf(), self._params)).data
+        # print 'g1', to_numpy(g1)
         _ = param_state['V'].add(g1).div(momentum)
+        # print 'V update', to_numpy(param_state['V'].val)
         
         # Update momentum
         param_state['d_v'] += param_state['d_x'] * lr
@@ -155,4 +162,5 @@ class FlatHSGD(Optimizer):
         param_state['d_x'] -= self._flatten(autograd.grad(g2, self._params)).data
         
         param_state['d_v'] = param_state['d_v'] * momentum
+        # print
 

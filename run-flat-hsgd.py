@@ -157,9 +157,9 @@ v = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(momentums.size()).doub
 
 all_val_hists, all_train_hists = [], []
 for meta_epoch in range(meta_epochs):
-    print "meta_epoch=%d" % meta_epoch
+    print "\nmeta_epoch=%d" % meta_epoch
     
-    opt, val_hist, train_hist = meta_iter(meta_epoch, seed=123)
+    opt, val_hist, train_hist = meta_iter(meta_epoch, seed=None)
     all_train_hists.append(train_hist)
     all_val_hists.append(val_hist)
     
