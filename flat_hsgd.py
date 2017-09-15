@@ -94,24 +94,16 @@ class FlatHSGD(Optimizer):
         group = self.param_groups[0]
         lr = self._fill_parser(group['lrs'][i])
         momentum = self._fill_parser(group['momentums'][i])
+        param_state = self.state['flat']
         
         flat_params = self._get_flat_params()
         flat_grad = self._get_flat_grads()
-        # print to_numpy(flat_grad)
-        
-        param_state = self.state['flat']
         
         if 'X' not in param_state:
-            if self.cuda:
-                param_state['X'] = ETensorCUDA(flat_params.data.clone())
-            else:
-                param_state['X'] = ETensor(flat_params.data.clone())
+            param_state['X'] = self.etensor(flat_params.data.clone())
         
         if 'V' not in param_state:
-            if self.cuda:
-                param_state['V'] = ETensorCUDA(flat_grad.clone().zero_())
-            else:
-                param_state['V'] = ETensor(flat_grad.clone().zero_())
+            param_state['V'] = self.etensor(flat_grad.clone().zero_())
         
         _ = param_state['V'].mul(momentum).sub(flat_grad)
         _ = param_state['X'].add(lr * param_state['V'].val)
