@@ -1,5 +1,9 @@
 #!/usr/bin/env python
 
+"""
+    run-flat-hsgd.py
+"""
+
 import sys
 sys.path.append('/home/bjohnson/software/autograd/')
 sys.path.append('/home/bjohnson/software/hypergrad')
@@ -19,6 +23,7 @@ from rsub import *
 from matplotlib import pyplot as plt
 
 from helpers import to_numpy
+from flat_hsgd import FlatHSGD
 
 # --
 # IO
@@ -43,7 +48,7 @@ y_val = valid_data['T'].argmax(axis=1)
 
 logit = lambda x: 1 / (1 + (-x).exp())
 
-def make_net(layers=[50, 50, 50]):
+def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
     
     net = nn.Sequential(
         nn.Linear(784, layers[0]),
@@ -57,8 +62,8 @@ def make_net(layers=[50, 50, 50]):
     
     for child in net.children():
         if isinstance(child, nn.Linear):
-            _ = child.weight.data.normal_(0, np.exp(-3))
-            
+            _ = child.weight.data.normal_(0, weight_scale)
+    
     net = net.double()
     return net
 
@@ -80,13 +85,13 @@ def train(net, opt, num_iters, seed=0):
         loss = F.cross_entropy(scores, y)
         loss.backward()
         
-        if isinstance(opt, FlatHSGD):
-            opt.step(i)
-        else:
-            opt.step()
+        opt.step(i) if isinstance(opt, FlatHSGD) else opt.step()
         
-        train_hist.append((to_numpy(net(X_train)).argmax(1) == to_numpy(y_train)).mean())
-        val_hist.append((to_numpy(net(X_val)).argmax(1) == y_val).mean())
+        train_acc = (to_numpy(net(X_train)).argmax(1) == to_numpy(y_train)).mean()
+        train_hist.append(train_acc)
+        
+        val_acc = (to_numpy(net(X_val)).argmax(1) == y_val).mean()
+        val_hist.append(val_acc)
     
     return opt, val_hist, train_hist
 
@@ -121,8 +126,10 @@ def meta_iter(meta_epoch, seed=None):
     # Train
     opt, val_hist, train_hist = train(net, opt, num_iters, seed=meta_epoch)
     trained_weights = to_numpy(opt._get_flat_params())
-    print 'train_acc=%f' % train_hist[-1]
-    print 'val_acc=%f' % val_hist[-1]
+    print {
+        "train_acc" : train_hist[-1],
+        "val_acc" : val_hist[-1]
+    }
     
     # Untrain
     opt = untrain(net, opt, num_iters, seed=meta_epoch)
@@ -136,9 +143,8 @@ def meta_iter(meta_epoch, seed=None):
 
 meta_epochs = 100
 
-# !! Should be parameterized on the log scale
-lrs = torch.DoubleTensor(np.full((num_iters, 8), -1)).cuda()
-momentums = torch.DoubleTensor(np.full((num_iters, 8), 0)).cuda()
+lrs = torch.DoubleTensor(np.full((num_iters, 8), -1.0)).cuda()
+momentums = torch.DoubleTensor(np.full((num_iters, 8), 0.0)).cuda()
 
 b1 = 0.1
 b2 = 0.01
@@ -152,11 +158,13 @@ v = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(momentums.size()).doub
 all_val_hists, all_train_hists = [], []
 for meta_epoch in range(meta_epochs):
     print "meta_epoch=%d" % meta_epoch
-    # ADAM
-    b1t = 1 - (1 - b1) * (lam ** meta_epoch)
+    
     opt, val_hist, train_hist = meta_iter(meta_epoch, seed=123)
     all_train_hists.append(train_hist)
     all_val_hists.append(val_hist)
+    
+    # ADAM step -- need to apply to all hypergrads
+    b1t = 1 - (1 - b1) * (lam ** meta_epoch)
     
     g = opt.d_lrs * lrs.exp() # !! Is this right
     m[0] = b1t * g + (1-b1t) * m[0]
@@ -171,41 +179,3 @@ for meta_epoch in range(meta_epochs):
     mhat = m[1] / (1 - (1 - b1) ** (meta_epoch + 1))
     vhat = v[1] / (1 - (1 - b2) ** (meta_epoch + 1))
     momentums -= step_size * mhat / (vhat.sqrt() + eps)
-
-
-
-z = np.vstack([all_hists])
-_ = plt.plot(z[:,-1])
-show_plot()
-
-
-for l in to_numpy(momentums[:,::2]).T:
-    _ = plt.plot(1 / (1 + np.exp(-l)), alpha=0.5)
-
-show_plot()
-
-for l in to_numpy(lrs).T:
-    _ = plt.plot(np.exp(l), alpha=0.5)
-
-show_plot()
-
-# --
-# baseline
-
-
-batch_size  = 250
-num_iters     = 100
-N_classes   = 10
-N_train     = 10000
-N_valid     = 10000
-N_tests     = 10000
-
-net = make_net().cuda()
-
-opt = torch.optim.SGD(net.parameters(), lr=0.3, momentum=0.9)
-
-all_hists = []
-for meta_epoch in range(meta_epochs):
-    opt, val_hist = train(net, opt, num_iters, seed=meta_epoch)
-    all_hists.append(val_hist)
-    print 'final acc=%f' % val_hist[-1]

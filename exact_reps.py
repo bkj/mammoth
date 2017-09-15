@@ -1,6 +1,16 @@
+#!/usr/bin/env pyton
+
+"""
+    exact_reps.py
+    
+    Wrappers for torch tensors that allow for exact (reversible) +,-,*,/
+    
+    !! Could probably be made faster, eg by reducing GPU<->CPU and numpy<->torch trips
+"""
 
 import torch
 import numpy as np
+from helpers import to_numpy
 
 class ETensor(object):
     RADIX_SCALE = long(2 ** 52)
