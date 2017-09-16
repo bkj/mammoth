@@ -12,7 +12,7 @@ from torch.nn import Parameter
 from torch import autograd
 from torch.optim.optimizer import Optimizer
 
-from exact_reps import *
+# from exact_reps import *
 
 class FlatHSGD(Optimizer):
     def __init__(self, params, lrs, momentums, cuda=False):
