@@ -24,13 +24,17 @@ from rsub import *
 from matplotlib import pyplot as plt
 
 from helpers import to_numpy
-from flat_hsgd import FlatHSGD
+from simple_flat_hsgd import FlatHSGD
+
+np.random.seed(123)
+_ = torch.manual_seed(456)
+_ = torch.cuda.manual_seed(789)
 
 # --
 # IO
 
 batch_size  = 200
-num_iters   = 100
+num_iters   = 5
 N_classes   = 10
 N_train     = 10000
 N_valid     = 10000
@@ -48,8 +52,8 @@ y_val = valid_data['T'].argmax(axis=1)
 # Helpers
 
 logit = lambda x: 1 / (1 + (-x).exp())
-d_logit = lambda x: x.exp() / ((1 + x.exp()) ** 2)
-d_exp = lambda x: x.exp()
+d_logit = lambda x: x.exp() / ((1 + x.exp()) ** 2) # derivative of logit
+d_exp = lambda x: x.exp() # derivative of exponent
 
 def set_net_weights(net, val):
     offset = 0
@@ -93,7 +97,7 @@ def deterministic_batch(X, y, sgd_iter, meta_iter, seed=0, batch_size=batch_size
 
 def train(net, opt, num_iters, meta_iter, seed=0):
     train_hist, val_hist = [], []
-    for i in tqdm(range(num_iters)):
+    for i in range(num_iters):
         X, y = deterministic_batch(X_train, y_train, sgd_iter=i, meta_iter=meta_iter, seed=0)
         
         opt.zero_grad()
@@ -113,7 +117,7 @@ def train(net, opt, num_iters, meta_iter, seed=0):
 
 
 def untrain(net, opt, num_iters, meta_iter, seed=0):
-    for i in tqdm(range(num_iters)[::-1]):
+    for i in range(num_iters)[::-1]:
         X, y = deterministic_batch(X_train, y_train, sgd_iter=i, meta_iter=meta_iter, seed=0)
         
         def lf():
@@ -124,13 +128,11 @@ def untrain(net, opt, num_iters, meta_iter, seed=0):
     return opt
 
 
-def do_meta_iter(meta_iter):
-    net = make_net(weight_scale=np.exp(-3)).cuda()
-    
-    opt = FlatHSGD(net.parameters(),
+def do_meta_iter(meta_iter, net, lrs, mos):
+    opt = FlatHSGD(
+        params=net.parameters(),
         lrs=lrs.exp(),
-        momentums=logit(momentums),
-        cuda=True
+        mos=logit(mos),
     )
     
     orig_weights = to_numpy(opt._get_flat_params())
@@ -147,7 +149,7 @@ def do_meta_iter(meta_iter):
     def lf_all():
         return F.cross_entropy(net(X_train), y_train)
     
-    opt.init_backwards(lf_all)
+    opt.init_backward(lf_all)
     
     # Untrain
     opt = untrain(net, opt, num_iters, meta_iter)
@@ -160,7 +162,7 @@ def do_meta_iter(meta_iter):
 # Run
 
 lrs = torch.DoubleTensor(np.full((num_iters, 8), -1.0)).cuda()
-momentums = torch.DoubleTensor(np.full((num_iters, 8), 0.0)).cuda()
+mos = torch.DoubleTensor(np.full((num_iters, 8), 0.0)).cuda()
 
 meta_iters = 50
 
@@ -168,16 +170,17 @@ b1 = 0.1
 b2 = 0.01
 eps = 10 ** -4
 lam = 10 ** -4
-step_size = 0.01
+step_size = 0.04
 
-m = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(momentums.size()).double().cuda()]
-v = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(momentums.size()).double().cuda()]
+m = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(mos.size()).double().cuda()]
+v = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(mos.size()).double().cuda()]
 
 all_val_hists, all_train_hists = [], []
 for meta_iter in range(meta_iters):
     print "\nmeta_iter=%d" % meta_iter
     
-    opt, val_hist, train_hist = do_meta_iter(meta_iter)
+    net = make_net(weight_scale=np.exp(-3)).cuda()
+    opt, val_hist, train_hist = do_meta_iter(meta_iter, net, lrs, mos)
     all_train_hists.append(train_hist)
     all_val_hists.append(val_hist)
     
@@ -191,10 +194,10 @@ for meta_iter in range(meta_iters):
     vhat = v[0] / (1 - (1 - b2) ** (meta_iter + 1))
     lrs -= step_size * mhat / (vhat.sqrt() + eps)
     
-    g = opt.d_momentums * d_logit(momentums) # !!
+    g = opt.d_mos * d_logit(mos) # !!
     m[1] = b1t * g + (1-b1t) * m[1]
     v[1] = b2 * (g ** 2) + (1 - b2) * v[1]
     mhat = m[1] / (1 - (1 - b1) ** (meta_iter + 1))
     vhat = v[1] / (1 - (1 - b2) ** (meta_iter + 1))
-    momentums -= step_size * mhat / (vhat.sqrt() + eps)
+    mos -= step_size * mhat / (vhat.sqrt() + eps)
 

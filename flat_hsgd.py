@@ -12,7 +12,7 @@ from torch.nn import Parameter
 from torch import autograd
 from torch.optim.optimizer import Optimizer
 
-# from exact_reps import *
+from exact_reps import *
 
 class FlatHSGD(Optimizer):
     def __init__(self, params, lrs, momentums, cuda=False):
@@ -25,7 +25,6 @@ class FlatHSGD(Optimizer):
         self.d_momentums = momentums.clone().zero_()
         
         self.cuda = cuda
-        self.etensor = ETensorCUDA if cuda else ETensor
         
         self._params  = self.param_groups[0]['params']
         self._szs     = [np.prod(p.size()) for p in self._params]
@@ -100,10 +99,10 @@ class FlatHSGD(Optimizer):
         flat_grad = self._get_flat_grads()
         
         if 'X' not in param_state:
-            param_state['X'] = self.etensor(flat_params.data.clone())
+            param_state['X'] = ETensor(flat_params.data.clone())
         
         if 'V' not in param_state:
-            param_state['V'] = self.etensor(flat_grad.clone().zero_())
+            param_state['V'] = ETensor(flat_grad.clone().zero_())
         
         _ = param_state['V'].mul(momentum).sub(flat_grad)
         _ = param_state['X'].add(lr * param_state['V'].val)
@@ -112,9 +111,7 @@ class FlatHSGD(Optimizer):
     def init_backwards(self, lf):
         param_state = self.state['flat']
         param_state['d_x'] = self._flatten(autograd.grad(lf(), self._params)).data
-        param_state['d_v'] = torch.zeros(self._numel()).double()
-        if self.cuda:
-            param_state['d_v'] = param_state['d_v'].cuda()
+        param_state['d_v'] = self._get_flat_params().data.clone().zero_()
             
     def unstep(self, lf, i=0):
         group = self.param_groups[0]
