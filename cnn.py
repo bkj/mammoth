@@ -1,17 +1,14 @@
 #!/usr/bin/env python
 
 """
-    run-2.py
+    cnn.py
     
     !! Need to clean this up so that arguments are passed around sanely
-    !! Need to implement own version of `load_data_dicts` and `RandomState`
     !! Need to implement example where meta-parameters get optimized.
         - Could do this by implementing "scaling layer" in nn.Sequential
 """
 
 import sys
-sys.path.append('/home/bjohnson/software/hypergrad')
-
 import h5py
 import numpy as np
 from tqdm import tqdm
@@ -21,8 +18,6 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.autograd import Variable
-
-from hypergrad.util import RandomState
 
 from rsub import *
 from matplotlib import pyplot as plt
@@ -45,24 +40,34 @@ batch_size  = 200
 num_iters   = 100
 train_size  = 40000
 
-from keras.datasets import mnist
-(X_train, y_train), (X_val, y_val) = mnist.load_data()
+# from keras.datasets import mnist
+# (X_train, y_train), (X_val, y_val) = mnist.load_data()
 
-X_train = Variable(torch.DoubleTensor(X_train.astype('float'))).cuda()
-y_train = Variable(torch.LongTensor(y_train.astype('int'))).cuda()
+# X_train = Variable(torch.FloatTensor(X_train.astype('float'))).cuda()
+# y_train = Variable(torch.LongTensor(y_train.astype('int'))).cuda()
 
-X_val = Variable(torch.DoubleTensor(X_val.astype('float'))).cuda()
-y_val = y_val.astype('int')
+# X_val = Variable(torch.FloatTensor(X_val.astype('float'))).cuda()
+# y_val = y_val.astype('int')
 
-X_train = X_train.view(X_train.size(0), 1, 28, 28)
-X_val = X_val.view(X_val.size(0), 1, 28, 28)
+# X_train = X_train.view(X_train.size(0), 1, 28, 28)
+# X_val = X_val.view(X_val.size(0), 1, 28, 28)
 
-X_train = X_train.expand(X_train.size(0), 3, 28, 28)
-X_val = X_val.expand(X_val.size(0), 3, 28, 28)
+# X_train = X_train.expand(X_train.size(0), 3, 28, 28)
+# X_val = X_val.expand(X_val.size(0), 3, 28, 28)
 
-X_train, X_val = X_train / 255, X_val / 255
+# X_train, X_val = X_train / 255, X_val / 255
 
-X_train, y_train = X_train[:train_size], y_train[:train_size]
+# X_train, y_train = X_train[:train_size], y_train[:train_size]
+
+# torch.save(X_train, open('.cnn_X_train', 'w'))
+# torch.save(y_train, open('.cnn_y_train', 'w'))
+# torch.save(X_val, open('.cnn_X_val', 'w'))
+# torch.save(y_val, open('.cnn_y_val', 'w'))
+
+X_train = torch.load(open('.cnn_X_train'))
+y_train = torch.load(open('.cnn_y_train'))
+X_val = torch.load(open('.cnn_X_val'))
+y_val = torch.load(open('.cnn_y_val'))
 
 # --
 # Helpers
@@ -71,8 +76,9 @@ logit = lambda x: 1 / (1 + (-x).exp())
 d_logit = lambda x: x.exp() / ((1 + x.exp()) ** 2) # derivative of logit
 d_exp = lambda x: x.exp() # derivative of exponent
 
+
 def deterministic_batch(X, y, sgd_iter, meta_iter, seed=0, batch_size=batch_size):
-    rs = RandomState((seed, meta_iter, sgd_iter))
+    rs = np.random.RandomState((seed, meta_iter, sgd_iter))
     idxs = rs.randint(X.size(0), size=batch_size)
     idxs = torch.LongTensor(idxs).cuda()
     X, y = X[idxs], y[idxs]
@@ -173,10 +179,10 @@ meta_iters = 50
 step_size = 0.01
 
 # Initial learning rates -- parameterized as log(lr)
-lrs = torch.DoubleTensor(np.full((num_iters, 8), -2.3)).cuda()
+lrs = torch.FloatTensor(np.full((num_iters, 8), -2.3)).cuda()
 
 # Initial momentums -- parameterized as inverse_logit(mo)
-mos = torch.DoubleTensor(np.full((num_iters, 8), 2.5)).cuda()
+mos = torch.FloatTensor(np.full((num_iters, 8), 2.5)).cuda()
 
 # Hyper-ADAM optimizer
 hyperopt = HADAM([lrs, mos], step_size=step_size)
@@ -186,7 +192,7 @@ all_hist = defaultdict(list)
 for meta_iter in range(meta_iters):
     print '\n\nmeta_iter=%d' % meta_iter
     
-    net = Net().double().cuda()
+    net = Net().cuda()
     opt, hist = do_meta_iter(meta_iter, net, lrs.exp(), logit(mos))
     
     lrs, mos = hyperopt.step_w_grads([
