@@ -16,7 +16,7 @@ from torch.optim.optimizer import Optimizer
 # --
 # Set backend
 
-etensor_backend = 'torch'
+etensor_backend = 'numpy'
 if etensor_backend == 'torch':
     from exact_reps import ETensor_torch as ETensor
 elif etensor_backend == 'numpy':
@@ -156,8 +156,8 @@ class HSGD():
         # Reverse SGD exactly
         _ = self.eX.sub(lr * self.eV.val)
         self._set_flat_params(self.eX.val)
-        g1 = self._flatten(autograd.grad(lf(), self.params)).data
-        _ = self.eV.add(g1).unmul(mo)
+        g = self._flatten(autograd.grad(lf(), self.params))
+        _ = self.eV.add(g.data).unmul(mo)
         
         # Update mo
         self.d_v += self.d_x * lr

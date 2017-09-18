@@ -183,7 +183,7 @@ class ETensor_torch(object):
         return self.intrep.double() / self.RADIX_SCALE
 
 
-class ETensor_torch_alternate(ETensor_torch):
+class ETensor_torch_alt1(ETensor_torch):
     """ 
         Alternate implementation that's more space efficient.
         Little more complicated, though so let's punt for now.
@@ -194,8 +194,8 @@ class ETensor_torch_alternate(ETensor_torch):
         
         self.counter += 1
         # If true, then could overflow on next iteration
-        mask = self.aux > 2 ** (63 - 16)
-        if mask.any():
+        if self.aux.max() > 2 ** (63 - 16):
+            mask = self.aux > 2 ** (63 - 16)
             self.aux_buffer.append((mask, self.aux.masked_select(mask)))
             self.aux.masked_fill_(mask, 0)
             self.aux_pushed_at.append(self.counter)
