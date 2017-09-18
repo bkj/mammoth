@@ -3,7 +3,7 @@
 """
     hsgd.py
     
-    !! Needs to be tested (further)
+    !! Could use further testing
 """
 
 import numpy as np
@@ -25,20 +25,33 @@ else:
     raise Exception('unknown etensor_backend=%s' % etensor_backend)
 
 class HSGD():
-    def __init__(self, params, lrs, mos):
+    def __init__(self, params, lrs, mos, mts=None):
+        """
+            params: parameters to optimizer
+            lrs: tensor of learning rates (default shape: needs to be (number of epochs x number of layers))
+            mos: tensor of momentums (default shape: same as lrs)
+            mts: tensor of meta parameters (have to have gradient w.r.t loss -- eg, have to be inside network)
+                !! Untested
+        """
         self.params = list(params)
         self.cuda = self.params[0].is_cuda
         
         self.lrs = lrs if not self.cuda else lrs.cuda()
         self.mos = mos if not self.cuda else mos.cuda()
         
+        self.has_mts = mts is not None
+        if self.has_mts:
+            self.mts = mts if not self.coda else mts.cuda()
+        
         self._szs     = [np.prod(p.size()) for p in self.params]
         self._offsets = [0] + list(np.cumsum(self._szs))[:-1]
         self._numel   = sum([p.numel() for p in self.params])
         
+        self.d_v   = self._get_flat_params().data.clone().zero_()
         self.d_lrs = lrs.clone().zero_()
         self.d_mos = mos.clone().zero_()
-        self.d_v   = self._get_flat_params().data.clone().zero_()
+        if self.has_mts:
+            self.d_mts = self.mts.clone().zero_()
         
         self.forward_ready = False
         self.backward_ready = False
@@ -151,5 +164,11 @@ class HSGD():
         d_vpar   = Parameter(self.d_v, requires_grad=True)
         lf_hvp_x = (self._flatten(autograd.grad(lf(), self.params, create_graph=True)) * d_vpar).sum()
         self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
+        
+        # (Maybe) update meta-parameters
+        if self.has_mts:
+            lf_hvp_mts = (self._flatten(autograd.grad(lf(), self.mts, create_graph=True)) * d_vpar).sum()
+            self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
+        
         self.d_v = self.d_v * mo
 

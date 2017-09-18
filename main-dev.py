@@ -2,12 +2,17 @@
 
 """
     run-2.py
+    
+    !! Need to clean this up so that arguments are passed around sanely
+    !! Need to implement own version of `load_data_dicts` and `RandomState`
+    !! Need to implement example where meta-parameters get optimized.
+        - Could do this by implementing "scaling layer" in nn.Sequential
 """
 
 import sys
-sys.path.append('/home/bjohnson/software/autograd/')
 sys.path.append('/home/bjohnson/software/hypergrad')
 
+import h5py
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
@@ -148,17 +153,24 @@ def do_meta_iter(meta_iter, net, lrs, mos):
 # Run
 
 meta_iters = 50
-lrs = torch.DoubleTensor(np.full((num_iters, 8), -1.0)).cuda()
+step_size = 0.04
+
+# Initial learning rates -- parameterized as log(lr)
+lrs = torch.DoubleTensor(np.full((num_iters, 8), -1.0)).cuda() 
+
+# Initial momentums -- parameterized as inverse_logit(mo)
 mos = torch.DoubleTensor(np.full((num_iters, 8), 0.0)).cuda()
 
-hyperopt = HADAM([lrs, mos], step_size=0.04)
+# Hyper-ADAM optimizer
+hyperopt = HADAM([lrs, mos], step_size=step_size)
 
+# Run hypertraining
 all_hist = defaultdict(list)
 for meta_iter in range(meta_iters):
     print '\nmeta_iter=%d' % meta_iter
     
-    net = make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]).cuda()
-    opt, hist = do_meta_iter(meta_iter, net, lrs.exp(), logit(mos))    
+    net = make_net().cuda()
+    opt, hist = do_meta_iter(meta_iter, net, lrs.exp(), logit(mos))
     
     lrs, mos = hyperopt.step_w_grads([
         opt.d_lrs * d_exp(lrs),
@@ -168,15 +180,10 @@ for meta_iter in range(meta_iters):
     all_hist['train'].append(hist['train'])
     all_hist['val'].append(hist['val'])
 
-# --
 # Save results
-
-f = h5py.open('hist-dev.h5')
+f = h5py.File('hist-dev.h5')
 f['train'] = np.vstack(all_hist['train'])
 f['test'] = np.vstack(all_hist['val'])
 f.close()
-
-
-
 
 
