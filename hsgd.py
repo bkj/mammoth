@@ -92,7 +92,10 @@ class HSGD():
         assert offset == self._numel, 'FlatHSGD._set_flat_params: offset != self._numel()'
     
     def _fill_parser(self, vals):
-        assert len(vals) == len(self._szs), 'FlatHSGD._fill_parser: len(vals) != len(self._szs)'
+        assert len(vals) == len(self._szs), (
+            '\n\nFlatHSGD._fill_parser: len(vals) != len(self._szs):\n'
+            '\t`lrs` or `mos` might be wrong dimension'
+        )
         views = []
         for i, s in enumerate(self._szs):
             view = vals.index(i).repeat(s)
@@ -136,9 +139,10 @@ class HSGD():
         self._set_flat_params(self.eX.val)
     
     def init_backward(self, lf):
+        assert self.forward_ready, 'cannot init_backward before calling HSGD.step'
         self.d_x = self._flatten(autograd.grad(lf(), self.params)).data
         self.backward_ready = True
-            
+        
     def unstep(self, lf, i=0):
         assert self.backward_ready, 'backward_ready = False'
         

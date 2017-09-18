@@ -73,7 +73,6 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
         nn.Linear(layers[1], layers[2]),
         nn.Tanh(),
         nn.Linear(layers[2], 10),
-        nn.LogSoftmax(),
     )
     
     for child in net.children():
