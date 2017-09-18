@@ -47,7 +47,6 @@ for i in range(n_iter)[::-1]:
 (z.val == o).all()
 
 time() - t
-# 4.3 s for 128 steps of 1M params
 
 # --
 

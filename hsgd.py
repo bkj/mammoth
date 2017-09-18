@@ -13,6 +13,9 @@ from torch import autograd
 from torch.nn import Parameter
 from torch.optim.optimizer import Optimizer
 
+# --
+# Set backend
+
 etensor_backend = 'torch'
 if etensor_backend == 'torch':
     from exact_reps import ETensor_torch as ETensor
