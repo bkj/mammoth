@@ -206,12 +206,3 @@ show_plot()
 _ = plt.plot(np.hstack(all_hist['val']))
 _ = plt.ylim(0.9, 1.0)
 show_plot()
-
-
-# # Save results
-# f = h5py.File('hist-dev.h5')
-# f['train'] = np.vstack(all_hist['train'])
-# f['test'] = np.vstack(all_hist['val'])
-# f.close()
-
-
