@@ -4,6 +4,12 @@
     fast_exact_reps.py
     
     Wrappers for torch tensors that allow for exact (reversible) +,-,*,/
+    
+    Implemented on GPU in torch
+    
+    !! Creating dense vectors, when in reality we want to handle overflow on 
+        a per-entry basis.  That might not be possible, but maybe we
+        could just reset variables that need to overflow?
 """
 
 import sys
@@ -14,6 +20,8 @@ from helpers import to_numpy
 class ETensor(object):
     RADIX_SCALE = long(2 ** 52)
     def __init__(self, val, from_intrep=False):
+        
+        print >> sys.stderr, 'ETensor -- vTorch'
         
         self.cuda = val.is_cuda
         self.intrep = self.float_to_intrep(val)
@@ -70,7 +78,7 @@ class ETensor(object):
         self.counter += 1
         # If true, then could overflow on next iteration
         if self.aux.max() > 2 ** (63 - 16):
-            print 'pushing aux @ %d' % self.counter
+            # print 'pushing aux @ %d' % self.counter
             self.aux_buffer.append(self.aux)
             self.aux = self._make_aux(self.size)
             self.aux_pushed_at.append(self.counter)
@@ -80,9 +88,8 @@ class ETensor(object):
     def unmul(self, a):
         
         if self.counter == self.aux_pushed_at[-1]:
-            # assert sum(self.aux) == 0, 'sum(self.aux) != 0'
             assert (self.aux == 0).all()
-            print 'popping aux @ %d' % self.counter
+            # print 'popping aux @ %d' % self.counter
             self.aux = self.aux_buffer.pop()
             _ = self.aux_pushed_at.pop()
         
@@ -108,3 +115,4 @@ class ETensor(object):
     @property
     def val(self):
         return self.intrep.double() / self.RADIX_SCALE
+

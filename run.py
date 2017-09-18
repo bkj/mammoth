@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-    run-flat-hsgd.py
+    run.py
 """
 
 import sys
@@ -24,7 +24,7 @@ from rsub import *
 from matplotlib import pyplot as plt
 
 from helpers import to_numpy
-from simple_flat_hsgd import FlatHSGD
+from hsgd import HSGD
 
 np.random.seed(123)
 _ = torch.manual_seed(456)
@@ -105,7 +105,7 @@ def train(net, opt, num_iters, meta_iter, seed=0):
         loss = F.cross_entropy(scores, y)
         loss.backward()
         
-        opt.step(i) if isinstance(opt, FlatHSGD) else opt.step()
+        opt.step(i) if isinstance(opt, HSGD) else opt.step()
         
         train_acc = (to_numpy(net(X_train)).argmax(1) == to_numpy(y_train)).mean()
         train_hist.append(train_acc)
@@ -129,21 +129,24 @@ def untrain(net, opt, num_iters, meta_iter, seed=0):
 
 
 def do_meta_iter(meta_iter, net, lrs, mos):
-    opt = FlatHSGD(
+    opt = HSGD(
         params=net.parameters(),
         lrs=lrs.exp(),
         mos=logit(mos),
     )
+    
+    # opt = torch.optim.SGD(
+    #     net.parameters(),
+    #     lr=0.1,
+    #     momentum=0.5,
+    # )
     
     orig_weights = to_numpy(opt._get_flat_params())
     
     # Train
     opt, val_hist, train_hist = train(net, opt, num_iters=num_iters, meta_iter=meta_iter, seed=0)
     trained_weights = to_numpy(opt._get_flat_params())
-    print {
-        "train_acc" : train_hist[-1],
-        "val_acc" : val_hist[-1]
-    }
+    print {"train_acc" : train_hist[-1], "val_acc" : val_hist[-1]}
     
     # Init untrain
     def lf_all():
@@ -179,7 +182,7 @@ all_val_hists, all_train_hists = [], []
 for meta_iter in range(meta_iters):
     print "\nmeta_iter=%d" % meta_iter
     
-    net = make_net(weight_scale=np.exp(-3)).cuda()
+    net = make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]).cuda()
     opt, val_hist, train_hist = do_meta_iter(meta_iter, net, lrs, mos)
     all_train_hists.append(train_hist)
     all_val_hists.append(val_hist)

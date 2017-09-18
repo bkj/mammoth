@@ -3,102 +3,150 @@
 """
     hsgd.py
     
-    HSGD, on a per-layer basis
-    
-    !! Prefer flat_hsgd.py if possible
-    !! This is buggy, I think
-    !! No CUDA support
+    !! Needs to be tested (further)
 """
 
+import numpy as np
+
 import torch
+from torch import autograd
 from torch.nn import Parameter
 from torch.optim.optimizer import Optimizer
 
-class HSGD(Optimizer):
-    def __init__(self, params, lrs, momentums, num_iters, cuda=False):
-        super(HSGD, self).__init__(params, {
-            "lrs" : lrs,
-            "momentums" : momentums,
-        })
-        self.d_lrs       = torch.zeros(num_iters).double()
-        self.d_momentums = torch.zeros(num_iters).double()
+etensor_backend = 'torch'
+if etensor_backend == 'torch':
+    from exact_reps import ETensor_torch as ETensor
+elif etensor_backend == 'numpy':
+    from exact_reps import ETensor_numpy as ETensor
+else:
+    raise Exception('unknown etensor_backend=%s' % etensor_backend)
+
+class HSGD():
+    def __init__(self, params, lrs, mos):
+        self.params = list(params)
+        self.cuda = self.params[0].is_cuda
         
-        self.cuda = cuda
-        if self.cuda:
-            self.d_lrs = self.d_lrs.cuda()
-            self.d_momentums = self.d_momentums.cuda()
+        self.lrs = lrs if not self.cuda else lrs.cuda()
+        self.mos = mos if not self.cuda else mos.cuda()
         
+        self._szs     = [np.prod(p.size()) for p in self.params]
+        self._offsets = [0] + list(np.cumsum(self._szs))[:-1]
+        self._numel   = sum([p.numel() for p in self.params])
+        
+        self.d_lrs = lrs.clone().zero_()
+        self.d_mos = mos.clone().zero_()
+        self.d_v   = self._get_flat_params().data.clone().zero_()
+        
+        self.forward_ready = False
+        self.backward_ready = False
+        
+        # No sparse layers, yet
+        for p in self.params:
+            if p.data.is_sparse:
+                raise NotImplemented
+    
+    def zero_grad(self):
+        for p in self.params:
+            if p.grad is not None:
+                if p.grad.volatile:
+                    p.grad.data.zero_()
+                else:
+                    data = p.grad.data
+                    p.grad = Variable(data.new().resize_as_(data).zero_())
+    
+    def _get_flat_params(self):
+        views = []
+        for p in self.params:
+            if p.data.is_sparse:
+                # view = p.to_dense().view(-1)
+                raise NotImplemented
+            else:
+                view = p.contiguous().view(-1)
+            views.append(view)
+        
+        return torch.cat(views, 0)
+    
+    def _set_flat_params(self, val):
+        offset = 0
+        for p in self.params:
+            numel = p.numel()
+            p.data.set_(val[offset:offset + numel].view_as(p.data))
+            offset += numel
+        
+        assert offset == self._numel, 'FlatHSGD._set_flat_params: offset != self._numel()'
+    
+    def _fill_parser(self, vals):
+        assert len(vals) == len(self._szs), 'FlatHSGD._fill_parser: len(vals) != len(self._szs)'
+        views = []
+        for i, s in enumerate(self._szs):
+            view = vals.index(i).repeat(s)
+            views.append(view)
+        
+        return torch.cat(views, 0)
+    
+    def _get_flat_grads(self):
+        views = []
+        for p in self.params:
+            if p.grad is None:
+                # view = p.data.new(p.data.numel()).zero_()
+                raise NotImplemented
+            elif p.grad.data.is_sparse:
+                # view = p.grad.data.to_dense().view(-1)
+                raise NotImplemented
+            else:
+                view = p.grad.data.view(-1)
+            views.append(view)
+        
+        return torch.cat(views, 0)
+    
+    def _flatten(self, x):
+        # !! This doesn't support sparse layers
+        return torch.cat([xx.contiguous().view(-1) for xx in x])
+    
     def step(self, i):
-        for group in self.param_groups:
-            momentum = torch.DoubleTensor([group['momentums'][i]])
-            lr = torch.DoubleTensor([group['lrs'][i]])
-            
-            if self.cuda:
-                momentum = momentum.cuda()
-                lr = lr.cuda()
-                
-            for param in group['params']:
-                if param.grad is None:
-                    continue
-                
-                g = param.grad.data
-                
-                param_state = self.state[param]
-                
-                if 'X' not in param_state:
-                    if self.cuda:
-                        param_state['X'] = ETensorCUDA(param.data.clone())
-                    else:
-                        param_state['X'] = ETensor(param.data.clone())
-                    
-                if 'V' not in param_state:
-                    if self.cuda:
-                        param_state['V'] = ETensorCUDA(g.clone().zero_())
-                    else:
-                        param_state['V'] = ETensor(g.clone().zero_())
-                
-                _ = param_state['V'].mul(momentum).sub(g)
-                _ = param_state['X'].add(lr * param_state['V'].val)
-                param.data.set_(param_state['X'].val)
+        lr = self._fill_parser(self.lrs[i])
+        mo = self._fill_parser(self.mos[i])
         
+        flat_params = self._get_flat_params()
+        flat_grad = self._get_flat_grads()
+        
+        if not self.forward_ready:
+            self.eX = ETensor(flat_params.data.clone())
+            self.eV = ETensor(flat_grad.clone().zero_())
+            self.forward_ready = True
+        
+        _ = self.eV.mul(mo).sub(flat_grad)
+        _ = self.eX.add(lr * self.eV.val)
+        self._set_flat_params(self.eX.val)
+    
+    def init_backward(self, lf):
+        self.d_x = self._flatten(autograd.grad(lf(), self.params)).data
+        self.backward_ready = True
+            
     def unstep(self, lf, i=0):
-        for group in self.param_groups:
-            
-            momentum = torch.DoubleTensor([group['momentums'][i]])
-            lr = torch.DoubleTensor([group['lrs'][i]])
-            if cuda:
-                momentum = momentum.cuda()
-                lr = lr.cuda()
-            
-            # Update parameters in all layers
-            for param in group['params']:
-                param_state = self.state[param]
-                
-                if 'd_x' not in param_state:
-                    param_state['d_x'] = autograd.grad(lf(), param)[0].data
-                
-                if 'grad_proj_x' not in param_state:
-                    param_state['grad_proj_x'] = lambda x, d: (autograd.grad(lf(), x, create_graph=True)[0] * d).sum()
-                
-                if 'd_v' not in param_state:
-                    param_state['d_v'] = torch.zeros(param.size()).double()
-                
-                self.d_lrs[i] += (param_state['d_x'] * param_state['V'].val).sum()
-                
-                _ = param_state['X'].sub(lr * param_state['V'].val)
-                param.data.set_(param_state['X'].val)
-            
-            # Update velocities in all layers
-            for param in group['params']:
-                param_state = self.state[param]
-                g = autograd.grad(lf(), param)[0].data
-                _ = param_state['V'].add(g).div(momentum)
-                
-                param_state['d_v'] += param_state['d_x'] * lr
-                
-                self.d_momentums[i] += (param_state['d_v'] * param_state['V'].val).sum()
-                
-                d_vpar = Parameter(param_state['d_v'], requires_grad=True)
-                param_state['d_x'] -= autograd.grad(param_state['grad_proj_x'](param, d_vpar), param)[0].data
-                
-                param_state['d_v'] = param_state['d_v'] * momentum
+        assert self.backward_ready, 'backward_ready = False'
+        
+        lr = self._fill_parser(self.lrs[i])
+        mo = self._fill_parser(self.mos[i])
+        
+        # Update learning rate
+        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
+            self.d_lrs[i,j] = (self.d_x[offset:(offset+sz)] * self.eV.val[offset:(offset+sz)]).sum()
+        
+        # Reverse SGD exactly
+        _ = self.eX.sub(lr * self.eV.val)
+        self._set_flat_params(self.eX.val)
+        g1 = self._flatten(autograd.grad(lf(), self.params)).data
+        _ = self.eV.add(g1).unmul(mo)
+        
+        # Update mo
+        self.d_v += self.d_x * lr
+        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
+            self.d_mos[i,j] = (self.d_v[offset:(offset+sz)] * self.eV.val[offset:(offset+sz)]).sum()
+        
+        # Update auxilliary parameters
+        d_vpar   = Parameter(self.d_v, requires_grad=True)
+        lf_hvp_x = (self._flatten(autograd.grad(lf(), self.params, create_graph=True)) * d_vpar).sum()
+        self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
+        self.d_v = self.d_v * mo
+
