@@ -34,7 +34,7 @@ _ = torch.cuda.manual_seed(789)
 # IO
 
 batch_size  = 200
-num_iters   = 5
+num_iters   = 100
 N_classes   = 10
 N_train     = 10000
 N_valid     = 10000
@@ -97,7 +97,7 @@ def deterministic_batch(X, y, sgd_iter, meta_iter, seed=0, batch_size=batch_size
 
 def train(net, opt, num_iters, meta_iter, seed=0):
     train_hist, val_hist = [], []
-    for i in range(num_iters):
+    for i in tqdm(range(num_iters)):
         X, y = deterministic_batch(X_train, y_train, sgd_iter=i, meta_iter=meta_iter, seed=0)
         
         opt.zero_grad()
@@ -117,7 +117,7 @@ def train(net, opt, num_iters, meta_iter, seed=0):
 
 
 def untrain(net, opt, num_iters, meta_iter, seed=0):
-    for i in range(num_iters)[::-1]:
+    for i in tqdm(range(num_iters)[::-1]):
         X, y = deterministic_batch(X_train, y_train, sgd_iter=i, meta_iter=meta_iter, seed=0)
         
         def lf():

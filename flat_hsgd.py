@@ -4,15 +4,14 @@
     flat_hsgd.py
     
     HSGD, implemented by flattening the layers
-    
-    Could very likely be sped up
 """
 
 from torch.nn import Parameter
 from torch import autograd
 from torch.optim.optimizer import Optimizer
 
-from exact_reps import *
+# from fast_exact_reps import ETensor
+from exact_reps import ETensor
 
 class FlatHSGD(Optimizer):
     def __init__(self, params, lrs, momentums, cuda=False):
@@ -130,7 +129,7 @@ class FlatHSGD(Optimizer):
         self._set_flat_params(param_state['X'].val)
         
         g1 = self._flatten(autograd.grad(lf(), self._params)).data
-        _ = param_state['V'].add(g1).div(momentum)
+        _ = param_state['V'].add(g1).unmul(momentum)
         
         # Update momentum
         param_state['d_v'] += param_state['d_x'] * lr

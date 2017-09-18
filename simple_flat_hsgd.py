@@ -15,7 +15,7 @@ from torch import autograd
 from torch.nn import Parameter
 from torch.optim.optimizer import Optimizer
 
-from exact_reps import *
+# from fast_exact_reps import ETensor
 
 class FlatHSGD():
     def __init__(self, params, lrs, mos):
