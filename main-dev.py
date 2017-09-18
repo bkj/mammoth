@@ -49,10 +49,10 @@ N_tests     = 10000
 
 train_data, valid_data, _ = load_data_dicts(N_train, N_valid, N_tests)
 
-X_train = Variable(torch.DoubleTensor(train_data['X'])).cuda()
+X_train = Variable(torch.FloatTensor(train_data['X'])).cuda()
 y_train = Variable(torch.LongTensor(train_data['T'].argmax(axis=1))).cuda()
 
-X_val = Variable(torch.DoubleTensor(valid_data['X'])).cuda()
+X_val = Variable(torch.FloatTensor(valid_data['X'])).cuda()
 y_val = valid_data['T'].argmax(axis=1)
 
 # --
@@ -79,7 +79,7 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
         if isinstance(child, nn.Linear):
             _ = child.weight.data.normal_(0, weight_scale)
     
-    net = net.double()
+    # net = net.double()
     return net
 
 
@@ -155,10 +155,10 @@ meta_iters = 50
 step_size = 0.04
 
 # Initial learning rates -- parameterized as log(lr)
-lrs = torch.DoubleTensor(np.full((num_iters, 8), -1.0)).cuda() 
+lrs = torch.FloatTensor(np.full((num_iters, 8), -1.0)).cuda() 
 
 # Initial momentums -- parameterized as inverse_logit(mo)
-mos = torch.DoubleTensor(np.full((num_iters, 8), 0.0)).cuda()
+mos = torch.FloatTensor(np.full((num_iters, 8), 0.0)).cuda()
 
 # Hyper-ADAM optimizer
 hyperopt = HADAM([lrs, mos], step_size=step_size)

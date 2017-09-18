@@ -9,7 +9,6 @@
     
     !! TODO -- add support for both doubles and floats
         - haven't tested w/ floats, but presumably works similarly
-        - RADIX_SCALE maybe has to change though
 """
 
 import sys
@@ -17,11 +16,21 @@ import torch
 import numpy as np
 from helpers import to_numpy
 
+
+float_cast = lambda x: x.float()
+double_cast = lambda x: x.double()
+
 class ETensor_numpy(object):
     RADIX_SCALE = long(2 ** 52)
     def __init__(self, val):
         
         self.cuda = val.is_cuda
+        
+        if type(val) in [torch.cuda.FloatTensor, torch.FloatTensor]:
+            self._cast = float_cast
+        elif type(val) in [torch.cuda.DoubleTensor, torch.DoubleTensor]:
+            self._cast = double_cast
+        
         self.intrep = self.float_to_intrep(val)
         self.size = val.size()
         
@@ -82,7 +91,7 @@ class ETensor_numpy(object):
     def float_to_rational(self, a):
         assert torch.gt(a, 0.0).all()
         d = 2 ** 16 / torch.floor(a + 1).long()
-        n = torch.floor(a * d.double() + 1).long()
+        n = torch.floor(a * self._cast(d) + 1).long()
         return n, d
         
     def float_to_intrep(self, x):
@@ -93,13 +102,18 @@ class ETensor_numpy(object):
     
     @property
     def val(self):
-        return self.intrep.double() / self.RADIX_SCALE
+        return self._cast(self.intrep) / self.RADIX_SCALE
 
 
 class ETensor_torch(object):
     RADIX_SCALE = long(2 ** 52)
     def __init__(self, val):
         self.cuda = val.is_cuda
+        if type(val) in [torch.cuda.FloatTensor, torch.FloatTensor]:
+            self._cast = float_cast
+        elif type(val) in [torch.cuda.DoubleTensor, torch.DoubleTensor]:
+            self._cast = double_cast
+        
         self.intrep = self.float_to_intrep(val)
         self.size = val.size()
         
@@ -169,7 +183,7 @@ class ETensor_torch(object):
     def float_to_rational(self, a):
         assert torch.gt(a, 0.0).all()
         d = 2 ** 16 / torch.floor(a + 1).long()
-        n = torch.floor(a * d.double() + 1).long()
+        n = torch.floor(a * self._cast(d) + 1).long()
         return n, d
     
     def float_to_intrep(self, x):
@@ -180,7 +194,7 @@ class ETensor_torch(object):
     
     @property
     def val(self):
-        return self.intrep.double() / self.RADIX_SCALE
+        return self._cast(self.intrep) / self.RADIX_SCALE
 
 
 class ETensor_torch_alt1(ETensor_torch):

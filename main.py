@@ -212,3 +212,6 @@ for i, v in enumerate(all_val_hists):
 
 show_plot()
 
+# forward: 18.07it/s
+# backward: 14.65 it/s
+
