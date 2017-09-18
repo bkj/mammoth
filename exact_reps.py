@@ -16,7 +16,6 @@ import torch
 import numpy as np
 from helpers import to_numpy
 
-
 float_cast = lambda x: x.float()
 double_cast = lambda x: x.double()
 
