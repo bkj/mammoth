@@ -150,8 +150,8 @@ class HSGD():
         mo = self._fill_parser(self.mos[i])
         
         # Update learning rate
-        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-            self.d_lrs[i,j] = (self.d_x[offset:(offset+sz)] * self.eV.val[offset:(offset+sz)]).sum()
+        # for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
+        #     self.d_lrs[i,j] = (self.d_x[offset:(offset+sz)] * self.eV.val[offset:(offset+sz)]).sum()
         
         # Reverse SGD exactly
         _ = self.eX.sub(lr * self.eV.val)
@@ -159,20 +159,20 @@ class HSGD():
         g = self._flatten(autograd.grad(lf(), self.params))
         _ = self.eV.add(g.data).unmul(mo)
         
-        # Update mo
-        self.d_v += self.d_x * lr
-        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-            self.d_mos[i,j] = (self.d_v[offset:(offset+sz)] * self.eV.val[offset:(offset+sz)]).sum()
+        # # Update mo
+        # self.d_v += self.d_x * lr
+        # for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
+        #     self.d_mos[i,j] = (self.d_v[offset:(offset+sz)] * self.eV.val[offset:(offset+sz)]).sum()
         
-        # Update auxilliary parameters
-        d_vpar   = Parameter(self.d_v, requires_grad=True)
-        lf_hvp_x = (self._flatten(autograd.grad(lf(), self.params, create_graph=True)) * d_vpar).sum()
-        self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
+        # # Update auxilliary parameters
+        # d_vpar   = Parameter(self.d_v, requires_grad=True)
+        # lf_hvp_x = (self._flatten(autograd.grad(lf(), self.params, create_graph=True)) * d_vpar).sum()
+        # self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
         
-        # (Maybe) update meta-parameters
-        if self.has_mts:
-            lf_hvp_mts = (self._flatten(autograd.grad(lf(), self.mts, create_graph=True)) * d_vpar).sum()
-            self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
+        # # (Maybe) update meta-parameters
+        # if self.has_mts:
+        #     lf_hvp_mts = (self._flatten(autograd.grad(lf(), self.mts, create_graph=True)) * d_vpar).sum()
+        #     self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
         
-        self.d_v = self.d_v * mo
+        # self.d_v = self.d_v * mo
 
