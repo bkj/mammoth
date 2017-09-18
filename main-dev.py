@@ -88,7 +88,7 @@ def deterministic_batch(X, y, sgd_iter, meta_iter, seed=0, batch_size=batch_size
 
 
 def train(net, opt, num_iters, meta_iter, seed=0):
-    hist = defaultdict([])
+    hist = defaultdict(list)
     for i in tqdm(range(num_iters)):
         X, y = deterministic_batch(X_train, y_train, sgd_iter=i, meta_iter=meta_iter, seed=0)
         
@@ -151,10 +151,11 @@ meta_iters = 50
 lrs = torch.DoubleTensor(np.full((num_iters, 8), -1.0)).cuda()
 mos = torch.DoubleTensor(np.full((num_iters, 8), 0.0)).cuda()
 
-hyperopt = HyperADAM([lrs, mos], step_size=0.04)
+hyperopt = HADAM([lrs, mos], step_size=0.04)
 
 all_hist = defaultdict(list)
 for meta_iter in range(meta_iters):
+    print '\nmeta_iter=%d' % meta_iter
     
     net = make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]).cuda()
     opt, hist = do_meta_iter(meta_iter, net, lrs.exp(), logit(mos))    
@@ -166,3 +167,16 @@ for meta_iter in range(meta_iters):
     
     all_hist['train'].append(hist['train'])
     all_hist['val'].append(hist['val'])
+
+# --
+# Save results
+
+f = h5py.open('hist-dev.h5')
+f['train'] = np.vstack(all_hist['train'])
+f['test'] = np.vstack(all_hist['val'])
+f.close()
+
+
+
+
+

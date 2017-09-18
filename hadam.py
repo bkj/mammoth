@@ -10,6 +10,9 @@
         b) gradients get passed in manually, rather than w/ autograd
 """
 
+import torch
+import numpy as np
+
 class HADAM(object):
     def __init__(self, params, step_size=0.1, b1=0.1, b2=0.01, eps=10**-4, lam=10**-4):
         
