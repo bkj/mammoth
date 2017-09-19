@@ -24,7 +24,6 @@ from torch.nn import functional as F
 from torch.autograd import Variable
 
 from hypergrad.data import load_data_dicts
-from hypergrad.util import RandomState
 
 from rsub import *
 from matplotlib import pyplot as plt
@@ -84,7 +83,7 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
 
 
 def deterministic_batch(X, y, sgd_iter, meta_iter, seed=0, batch_size=batch_size):
-    rs = RandomState((seed, meta_iter, sgd_iter))
+    rs = np.random.RandomState((seed, meta_iter, sgd_iter))
     idxs = rs.randint(X.size(0), size=batch_size)
     idxs = torch.LongTensor(idxs).cuda()
     X, y = X[idxs], y[idxs]
@@ -184,5 +183,3 @@ f = h5py.File('hist-dev.h5')
 f['train'] = np.vstack(all_hist['train'])
 f['test'] = np.vstack(all_hist['val'])
 f.close()
-
-

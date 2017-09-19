@@ -37,7 +37,7 @@ torch.backends.cudnn.enabled = False
 # IO
 
 batch_size  = 200
-num_iters   = 100
+num_iters   = 50
 train_size  = 40000
 
 # from keras.datasets import mnist
@@ -94,7 +94,7 @@ def train(net, opt, num_iters, meta_iter, seed=0):
         opt.zero_grad()
         scores = net(X)
         loss = F.cross_entropy(scores, y)
-        loss.backward()
+        loss.backward(create_graph=True) # !! This is weird
         
         # batch_acc = (to_numpy(scores.max(1)[1]) == to_numpy(y)).mean()
         # gen.set_postfix({'batch_acc' : batch_acc, 'mode' : 'forward', 'meta_iter' : meta_iter})
@@ -121,6 +121,7 @@ def untrain(net, opt, num_iters, meta_iter, seed=0):
         def lf():
             return F.cross_entropy(net(X), y)
         
+        opt.zero_grad()
         opt.unstep(lf, i)
         # gen.set_postfix({'mode' : 'backwards', 'meta_iter' : meta_iter})
     
@@ -129,6 +130,7 @@ def untrain(net, opt, num_iters, meta_iter, seed=0):
 
 def do_meta_iter(meta_iter, net, lrs, mos):
     opt = HSGD(params=net.parameters(), lrs=lrs, mos=mos)
+    # opt = torch.optim.SGD(net.parameters(), lr=0.1, momentum=0.9)
     
     orig_weights = to_numpy(opt._get_flat_params())
     
@@ -140,7 +142,8 @@ def do_meta_iter(meta_iter, net, lrs, mos):
     # Init untrain
     def lf_all():
         return F.cross_entropy(net(X_train), y_train)
-        
+    
+    opt.zero_grad()
     opt.init_backward(lf_all)
     
     # Untrain

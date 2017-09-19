@@ -10,13 +10,16 @@ import numpy as np
 
 import torch
 from torch import autograd
+from torch.autograd import Variable
 from torch.nn import Parameter
 from torch.optim.optimizer import Optimizer
+
+from helpers import to_numpy
 
 # --
 # Set backend
 
-etensor_backend = 'numpy'
+etensor_backend = 'torch'
 if etensor_backend == 'torch':
     from exact_reps import ETensor_torch as ETensor
 elif etensor_backend == 'numpy':
@@ -150,29 +153,30 @@ class HSGD():
         mo = self._fill_parser(self.mos[i])
         
         # Update learning rate
-        # for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-        #     self.d_lrs[i,j] = (self.d_x[offset:(offset+sz)] * self.eV.val[offset:(offset+sz)]).sum()
+        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
+            self.d_lrs[i,j] = torch.dot(self.d_x[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
         
         # Reverse SGD exactly
         _ = self.eX.sub(lr * self.eV.val)
         self._set_flat_params(self.eX.val)
-        g = self._flatten(autograd.grad(lf(), self.params))
+        
+        g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
         _ = self.eV.add(g.data).unmul(mo)
         
-        # # Update mo
-        # self.d_v += self.d_x * lr
-        # for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-        #     self.d_mos[i,j] = (self.d_v[offset:(offset+sz)] * self.eV.val[offset:(offset+sz)]).sum()
+        # Update mo
+        self.d_v += self.d_x * lr
+        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
+            self.d_mos[i,j] = torch.dot(self.d_v[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
         
         # # Update auxilliary parameters
-        # d_vpar   = Parameter(self.d_v, requires_grad=True)
-        # lf_hvp_x = (self._flatten(autograd.grad(lf(), self.params, create_graph=True)) * d_vpar).sum()
-        # self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
+        d_vpar   = Parameter(self.d_v, requires_grad=True)
+        lf_hvp_x = torch.dot(g, d_vpar)
+        self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
         
-        # # (Maybe) update meta-parameters
-        # if self.has_mts:
-        #     lf_hvp_mts = (self._flatten(autograd.grad(lf(), self.mts, create_graph=True)) * d_vpar).sum()
-        #     self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
+        # (Maybe) update meta-parameters
+        if self.has_mts:
+            lf_hvp_mts = (self._flatten(autograd.grad(lf(), self.mts, create_graph=True)) * d_vpar).sum()
+            self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
         
-        # self.d_v = self.d_v * mo
+        self.d_v = self.d_v * mo
 
