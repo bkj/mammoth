@@ -103,7 +103,7 @@ def train(net, opt, num_iters, meta_iter, seed=0):
         opt.zero_grad()
         scores = net(X)
         loss = F.cross_entropy(scores, y)
-        loss.backward()
+        loss.backward(create_graph=True)
         
         opt.step(i) if isinstance(opt, HSGD) else opt.step()
         
@@ -134,12 +134,6 @@ def do_meta_iter(meta_iter, net, lrs, mos):
         lrs=lrs.exp(),
         mos=logit(mos),
     )
-    
-    # opt = torch.optim.SGD(
-    #     net.parameters(),
-    #     lr=0.1,
-    #     momentum=0.5,
-    # )
     
     orig_weights = to_numpy(opt._get_flat_params())
     
@@ -211,7 +205,3 @@ for i, v in enumerate(all_val_hists):
     _ = plt.plot(v, c=plt.cm.rainbow(cm[i]), alpha=0.25)
 
 show_plot()
-
-# forward: 18.07it/s
-# backward: 14.65 it/s
-

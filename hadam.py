@@ -40,8 +40,8 @@ class HADAM(object):
         
         assert offset == self._numel, 'HyperADAM: offset != self._numel'
         
-    def step_w_grads(self, grads):
-        g = torch.cat([grad.contiguous().view(-1) for grad in grads])
+    def step_w_grads(self, external_grads):
+        g = torch.cat([grad.contiguous().view(-1) for grad in external_grads])
         
         b1t = 1 - (1 - self.b1) * (self.lam ** self.iter)
         self.m = b1t * g + (1 - b1t) * self.m
@@ -50,5 +50,6 @@ class HADAM(object):
         vhat = self.v / (1 - (1 - self.b2) ** (self.iter + 1))
         
         self.iter += 1
-        self._flat_params -= self.step_size * mhat / (vhat.sqrt() + self.eps)
+        update = self.step_size * mhat / (vhat.sqrt() + self.eps)
+        self._flat_params -= update
         return self.params

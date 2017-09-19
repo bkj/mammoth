@@ -19,7 +19,7 @@ from tqdm import tqdm
 from collections import defaultdict
 
 import torch
-from torch import nn
+from torch import nn, autograd
 from torch.nn import functional as F
 from torch.autograd import Variable
 
@@ -78,7 +78,6 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
         if isinstance(child, nn.Linear):
             _ = child.weight.data.normal_(0, weight_scale)
     
-    # net = net.double()
     return net
 
 
@@ -98,7 +97,7 @@ def train(net, opt, num_iters, meta_iter, seed=0):
         opt.zero_grad()
         scores = net(X)
         loss = F.cross_entropy(scores, y)
-        loss.backward()
+        loss.backward(create_graph=True) # !! Have to do this
         
         opt.step(i) if isinstance(opt, HSGD) else opt.step()
         
@@ -118,6 +117,7 @@ def untrain(net, opt, num_iters, meta_iter, seed=0):
         def lf():
             return F.cross_entropy(net(X), y)
         
+        opt.zero_grad()
         opt.unstep(lf, i)
     
     return opt
@@ -130,12 +130,13 @@ def do_meta_iter(meta_iter, net, lrs, mos):
     
     # Train
     opt, hist = train(net, opt, num_iters=num_iters, meta_iter=meta_iter, seed=0)
-    print {"train_acc" : hist['train'][-1], "val_acc" : hist['val'][-1]}
+    print 'val_acc=%f' % hist['val'][-1]
     
     # Init untrain
     def lf_all():
         return F.cross_entropy(net(X_train), y_train)
     
+    opt.zero_grad()
     opt.init_backward(lf_all)
     
     # Untrain
@@ -151,16 +152,17 @@ def do_meta_iter(meta_iter, net, lrs, mos):
 # Run
 
 meta_iters = 50
-step_size = 0.04
+step_size = 0.01
 
 # Initial learning rates -- parameterized as log(lr)
-lrs = torch.FloatTensor(np.full((num_iters, 8), -1.0)).cuda() 
+lr_bias = torch.FloatTensor([0.1]).cuda()
+lr_res =  torch.FloatTensor(np.full((1, 8), 0.0)).cuda()
 
-# Initial momentums -- parameterized as inverse_logit(mo)
-mos = torch.FloatTensor(np.full((num_iters, 8), 0.0)).cuda()
+mo_bias = torch.FloatTensor([0.5]).cuda()
+mo_res = torch.FloatTensor(np.full((1, 8), 0)).cuda()
 
 # Hyper-ADAM optimizer
-hyperopt = HADAM([lrs, mos], step_size=step_size)
+hyperopt = HADAM([lr_bias, lr_res, mo_bias, mo_res], step_size=step_size)
 
 # Run hypertraining
 all_hist = defaultdict(list)
@@ -168,18 +170,43 @@ for meta_iter in range(meta_iters):
     print '\nmeta_iter=%d' % meta_iter
     
     net = make_net().cuda()
-    opt, hist = do_meta_iter(meta_iter, net, lrs.exp(), logit(mos))
+    opt, hist = do_meta_iter(meta_iter, net, (lr_bias + lr_res).repeat(100, 1), (mo_bias + mo_res).repeat(100, 1))
     
-    lrs, mos = hyperopt.step_w_grads([
-        opt.d_lrs * d_exp(lrs),
-        opt.d_mos * d_logit(mos)
+    lr_bias, lr_res, mo_bias, mo_res = hyperopt.step_w_grads([
+        opt.d_lrs.sum(dim=0).sum(dim=0),
+        opt.d_lrs.sum(dim=0).view(1, -1),
+        opt.d_mos.sum(dim=0).sum(dim=0),
+        opt.d_mos.sum(dim=0).view(1, -1),
     ])
     
     all_hist['train'].append(hist['train'])
     all_hist['val'].append(hist['val'])
+    all_hist['lr_bias'].append(to_numpy(lr_bias))
+    all_hist['lr_res'].append(to_numpy(lr_res))
+    all_hist['mo_bias'].append(to_numpy(mo_bias))
+    all_hist['mo_res'].append(to_numpy(mo_res))
+    
+    _ = plt.plot(np.hstack(all_hist['train']), alpha=0.25)
+    _ = plt.plot(np.hstack(all_hist['val']), alpha=0.25)
+    show_plot()
+
+
+for l in (np.hstack(all_hist['lr_bias']).reshape(-1, 1) + np.vstack(all_hist['lr_res'])).T[::2]:
+    _ = plt.plot(l, alpha=0.25)
+
+show_plot()
 
 # Save results
-f = h5py.File('hist-dev.h5')
-f['train'] = np.vstack(all_hist['train'])
-f['test'] = np.vstack(all_hist['val'])
-f.close()
+# f = h5py.File('hist-dev.h5')
+# f['train'] = np.vstack(all_hist['train'])
+# f['test'] = np.vstack(all_hist['val'])
+# f.close()
+
+# cis = np.linspace(0, 1, len(f['test'].value))
+# for i, l in zip(cis, f['test'].value):
+#     _ = plt.plot(l, c=plt.cm.rainbow(i), alpha=0.25)
+
+# show_plot()
+
+# _ = plt.plot(f['test'].value[:,-1])
+# show_plot()

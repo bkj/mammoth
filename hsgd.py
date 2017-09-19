@@ -28,7 +28,7 @@ else:
     raise Exception('unknown etensor_backend=%s' % etensor_backend)
 
 class HSGD():
-    def __init__(self, params, lrs, mos, mts=None):
+    def __init__(self, params, lrs, mos, mts=None, szs=None):
         """
             params: parameters to optimizer
             lrs: tensor of learning rates (default shape: needs to be (number of epochs x number of layers))
@@ -46,9 +46,9 @@ class HSGD():
         if self.has_mts:
             self.mts = mts if not self.coda else mts.cuda()
         
-        self._szs     = [np.prod(p.size()) for p in self.params]
-        self._offsets = [0] + list(np.cumsum(self._szs))[:-1]
         self._numel   = sum([p.numel() for p in self.params])
+        self._szs     = szs if szs is not None else [np.prod(p.size()) for p in self.params]
+        self._offsets = [0] + list(np.cumsum(self._szs))[:-1]
         
         self.d_v   = self._get_flat_params().data.clone().zero_()
         self.d_lrs = lrs.clone().zero_()
@@ -125,9 +125,9 @@ class HSGD():
         # !! This doesn't support sparse layers
         return torch.cat([xx.contiguous().view(-1) for xx in x])
     
-    def step(self, i):
-        lr = self._fill_parser(self.lrs[i])
-        mo = self._fill_parser(self.mos[i])
+    def step(self, sgd_iter):
+        lr = self._fill_parser(self.lrs[sgd_iter])
+        mo = self._fill_parser(self.mos[sgd_iter])
         
         flat_params = self._get_flat_params()
         flat_grad = self._get_flat_grads()
@@ -146,27 +146,26 @@ class HSGD():
         self.d_x = self._flatten(autograd.grad(lf(), self.params)).data
         self.backward_ready = True
         
-    def unstep(self, lf, i=0):
+    def unstep(self, lf, sgd_iter):
         assert self.backward_ready, 'backward_ready = False'
         
-        lr = self._fill_parser(self.lrs[i])
-        mo = self._fill_parser(self.mos[i])
+        lr = self._fill_parser(self.lrs[sgd_iter])
+        mo = self._fill_parser(self.mos[sgd_iter])
         
         # Update learning rate
         for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-            self.d_lrs[i,j] = torch.dot(self.d_x[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
+            self.d_lrs[sgd_iter,j] = torch.dot(self.d_x[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
         
         # Reverse SGD exactly
         _ = self.eX.sub(lr * self.eV.val)
         self._set_flat_params(self.eX.val)
-        
         g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
         _ = self.eV.add(g.data).unmul(mo)
         
         # Update mo
         self.d_v += self.d_x * lr
         for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-            self.d_mos[i,j] = torch.dot(self.d_v[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
+            self.d_mos[sgd_iter,j] = torch.dot(self.d_v[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
         
         # # Update auxilliary parameters
         d_vpar   = Parameter(self.d_v, requires_grad=True)

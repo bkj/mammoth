@@ -6,6 +6,8 @@
     !! Need to clean this up so that arguments are passed around sanely
     !! Need to implement example where meta-parameters get optimized.
         - Could do this by implementing "scaling layer" in nn.Sequential
+    
+    !! CUDNN nondeterminism causes problems -- is there a way to force deterministic?
 """
 
 import sys
@@ -31,14 +33,14 @@ _ = torch.manual_seed(456)
 _ = torch.cuda.manual_seed(789)
 
 # !! Appears to be necessary 
-torch.backends.cudnn.enabled = False
+torch.backends.cudnn.enabled = True
 
 # --
 # IO
 
-batch_size  = 200
-num_iters   = 50
-train_size  = 40000
+batch_size  = 128
+num_iters   = 250
+train_size  = 30000
 
 # from keras.datasets import mnist
 # (X_train, y_train), (X_val, y_val) = mnist.load_data()
@@ -123,20 +125,20 @@ def untrain(net, opt, num_iters, meta_iter, seed=0):
         
         opt.zero_grad()
         opt.unstep(lf, i)
-        # gen.set_postfix({'mode' : 'backwards', 'meta_iter' : meta_iter})
     
     return opt
 
 
 def do_meta_iter(meta_iter, net, lrs, mos):
-    opt = HSGD(params=net.parameters(), lrs=lrs, mos=mos)
+    szs = [sum([np.prod(p.size()) for p in net.parameters()])]
+    opt = HSGD(params=net.parameters(), lrs=lrs, mos=mos, szs=szs)
+    # opt = HSGD(params=net.parameters(), lrs=lrs, mos=mos)
     # opt = torch.optim.SGD(net.parameters(), lr=0.1, momentum=0.9)
     
     orig_weights = to_numpy(opt._get_flat_params())
     
     # Train
     opt, hist = train(net, opt, num_iters=num_iters, meta_iter=meta_iter, seed=0)
-    # print {"train_acc" : hist['train'][-1], "val_acc" : hist['val'][-1]}
     print 'val_acc=%f' % hist['val'][-1]
     
     # Init untrain
@@ -162,30 +164,39 @@ def do_meta_iter(meta_iter, net, lrs, mos):
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=5)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=5)
-        self.fc1 = nn.Linear(512, 32)
-        self.fc2 = nn.Linear(32, 10)
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=5)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=5)
+        self.fc1   = nn.Linear(1024, 128)
+        self.fc2   = nn.Linear(128, 10)
         
     def forward(self, x):
-        x = F.tanh(F.max_pool2d(self.conv1(x), 2))
-        x = F.tanh(F.max_pool2d(self.conv2(x), 2))
-        x = x.view(-1, 512)
-        x = F.tanh(self.fc1(x))
+        x = F.relu(F.max_pool2d(self.conv1(x), 2))
+        x = F.relu(F.max_pool2d(self.conv2(x), 2))
+        x = x.view(-1, 1024)
+        x = F.relu(self.fc1(x))
         x = self.fc2(x)
         return x
+
+# net = Net().cuda()
+# opt = torch.optim.Adam(params=net.parameters())
+# for meta_iter in range(5):
+#     opt, hist = train(net, opt, num_iters=1000, meta_iter=1, seed=123)
+#     print 'val_acc=%f' % hist['val'][-1]
+
+# state = net.state_dict()
+
 
 # --
 # Run
 
-meta_iters = 50
-step_size = 0.01
+meta_iters = 1000
+step_size = 0.001
 
-# Initial learning rates -- parameterized as log(lr)
-lrs = torch.FloatTensor(np.full((num_iters, 8), -2.3)).cuda()
+# Initial learning rates
+lrs = torch.FloatTensor(np.full((num_iters, 1), 0.01)).cuda()
 
 # Initial momentums -- parameterized as inverse_logit(mo)
-mos = torch.FloatTensor(np.full((num_iters, 8), 2.5)).cuda()
+mos = torch.FloatTensor(np.full((num_iters, 1), 0.0)).cuda()
 
 # Hyper-ADAM optimizer
 hyperopt = HADAM([lrs, mos], step_size=step_size)
@@ -196,22 +207,36 @@ for meta_iter in range(meta_iters):
     print '\n\nmeta_iter=%d' % meta_iter
     
     net = Net().cuda()
-    opt, hist = do_meta_iter(meta_iter, net, lrs.exp(), logit(mos))
+    opt, hist = do_meta_iter(meta_iter, net, lrs, logit(mos))
     
     lrs, mos = hyperopt.step_w_grads([
-        opt.d_lrs * d_exp(lrs),
-        opt.d_mos * d_logit(mos)
+        opt.d_lrs,# * d_exp(lrs), # !! Not sure this is 
+        opt.d_mos,# * d_logit(mos), # !! Not sure this is good
     ])
     
     all_hist['val'].append(hist['val'])
+    all_hist['lrs'].append(lrs)
+    all_hist['mos'].append(mos)
+    
+    # for l in to_numpy(lrs[:,::2]).T:
+    #     _ = plt.plot(l)
+    
+    # show_plot()
 
 
-for l in to_numpy(lrs[:,::2]).T:
-    _ = plt.plot(np.exp(l))
+# Save results
+f = h5py.File('hist-dev-cnn.h5')
+# f['train'] = np.vstack(all_hist['train'])
+f['val']   = np.vstack(all_hist['val'])
+f['lrs']   = np.array(map(to_numpy, all_hist['lrs']))
+f['mos']   = np.array(map(to_numpy, all_hist['mos']))
+f.close()
 
-show_plot()
+# for l in to_numpy(lrs[:,::2]).T:
+#     _ = plt.plot(np.exp(l))
 
+# show_plot()
 
-_ = plt.plot(np.hstack(all_hist['val']))
-_ = plt.ylim(0.9, 1.0)
-show_plot()
+# _ = plt.plot(np.hstack(f['test']))
+# _ = plt.ylim(0.9, 1.0)
+# show_plot()
