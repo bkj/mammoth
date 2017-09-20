@@ -99,12 +99,14 @@ class HSGD():
             '\n\nFlatHSGD._fill_parser: len(vals) != len(self._szs):\n'
             '\t`lrs` or `mos` might be wrong dimension'
         )
-        views = []
-        for i, s in enumerate(self._szs):
-            view = vals.index(i).repeat(s)
-            views.append(view)
+        # views = []
+        # for i, s in enumerate(self._szs):
+        #     view = vals.index(i).repeat(s)
+        #     views.append(view)
         
-        return torch.cat(views, 0)
+        # return torch.cat(views, 0)
+        tmp = torch.FloatTensor(to_numpy(vals).repeat(self._szs))
+        return tmp if not self.cuda else tmp.cuda()
     
     def _get_flat_grads(self):
         views = []
@@ -178,4 +180,100 @@ class HSGD():
             self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
         
         self.d_v = self.d_v * mo
+
+
+# --
+# Non-flattened version
+
+class HSGD2():
+    """ !! Seems slower than previous implementation, though it's simpler, in a way """
+    def __init__(self, params, lrs, mos, mts=None, szs=None):
+        """
+            params: parameters to optimizer
+            lrs: tensor of learning rates (default shape: needs to be (number of epochs x number of layers))
+            mos: tensor of momentums (default shape: same as lrs)
+            mts: tensor of meta parameters (have to have gradient w.r.t loss -- eg, have to be inside network)
+                !! Untested
+        """
+        assert mts == None
+        
+        self.params = list(params)
+        self.cuda = self.params[0].is_cuda
+        
+        self.lrs = lrs if not self.cuda else lrs.cuda()
+        self.mos = mos if not self.cuda else mos.cuda()
+        
+        self.has_mts = mts is not None
+        if self.has_mts:
+            self.mts = mts if not self.coda else mts.cuda()
+        
+        self.d_v   = [p.data.clone().zero_() for p in self.params]
+        self.d_lrs = lrs.clone().zero_()
+        self.d_mos = mos.clone().zero_()
+        
+        self.forward_ready = False
+        self.backward_ready = False
+        
+        # No sparse layers, yet
+        for p in self.params:
+            if p.data.is_sparse:
+                raise NotImplemented
+    
+    def zero_grad(self):
+        for p in self.params:
+            if p.grad is not None:
+                if p.grad.volatile:
+                    p.grad.data.zero_()
+                else:
+                    data = p.grad.data
+                    p.grad = Variable(data.new().resize_as_(data).zero_())
+    
+    def _get_flat_params(self):
+        return torch.cat([p.contiguous().view(-1) for p in self.params])
+    
+    def step(self, sgd_iter):
+        lr = self.lrs[sgd_iter]
+        mo = self.mos[sgd_iter]
+        
+        if not self.forward_ready:
+            self.eX = [ETensor(p.data.clone()) for p in self.params]
+            self.eV = [ETensor(p.grad.data.clone().zero_()) for p in self.params]
+            self.forward_ready = True
+        
+        for i, p in enumerate(self.params):
+            _ = self.eV[i].mul(mo.index(i)).sub(p.grad.data)
+            _ = self.eX[i].add(lr.index(i) * self.eV[i].val)
+            p.data.set_(self.eX[i].val)
+    
+    def init_backward(self, lf):
+        assert self.forward_ready, 'cannot init_backward before calling HSGD.step'
+        self.d_x = [g.data for g in autograd.grad(lf(), self.params)]
+        self.backward_ready = True
+        
+    def unstep(self, lf, sgd_iter):
+        assert self.backward_ready, 'backward_ready = False'
+        
+        lr = self.lrs[sgd_iter]
+        mo = self.mos[sgd_iter]
+        
+        # Reverse SGD exactly
+        for i, p in enumerate(self.params):
+            self.d_lrs[sgd_iter, i] = (self.d_x[i] * self.eV[i].val).sum()
+            _ = self.eX[i].sub(lr.index(i) * self.eV[i].val)
+            p.data.set_(self.eX[i].val)
+        
+        g = autograd.grad(lf(), self.params, create_graph=True)
+        
+        for i, p in enumerate(self.params):
+            _ = self.eV[i].add(g[i].data).unmul(mo.index(i))
+            
+            self.d_v[i] += self.d_x[i] * lr.index(i)
+            
+            self.d_mos[sgd_iter,i] = (self.d_v[i] * self.eV[i].val).sum()
+            
+            # Update auxilliary parameters
+            d_vpar = Parameter(self.d_v[i], requires_grad=True)
+            self.d_x[i] -= autograd.grad((g[i] * d_vpar).sum(), p, create_graph=True)[0].data
+            
+            self.d_v[i] = self.d_v[i] * mo.index(i)
 

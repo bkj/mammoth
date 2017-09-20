@@ -14,6 +14,7 @@ from torch.autograd import Variable
 
 from helpers import to_numpy
 from hsgd import HSGD
+# from hsgd import HSGD2 as HSGD
 
 class HyperLayer(nn.Module):
     def __init__(self, X, y, num_iters, batch_size, seed=0):
@@ -27,17 +28,17 @@ class HyperLayer(nn.Module):
         
         self.register_backward_hook(HyperLayer._backward_hook)
     
-    def __call__(self, net, lrs, mos, val_data=None):
+    def __call__(self, net, lrs, mos, val_data=None, szs=None):
         self.net = net
         self.lrs = lrs
         self.mos = mos
-        self.opt = HSGD(params=net.parameters(), lrs=lrs.data, mos=mos.data)
+        self.opt = HSGD(params=net.parameters(), lrs=lrs.data, mos=mos.data, szs=szs)
+        
         self.orig_weights = to_numpy(self.opt._get_flat_params())
         
         # Run hyperstep
         self._train(self.X, self.y, self.num_iters, self.batch_size)
-        if val_data:
-            self.val_acc = (to_numpy(net(val_data[0])).argmax(1) == to_numpy(val_data[1]).argmax(1)).mean()
+        self.val_acc = self._validate(*val_data) if val_data else None
         self._untrain(self.X, self.y, self.num_iters, self.batch_size)
         
         # Return dummy loss, so we can propagate errors
@@ -61,6 +62,11 @@ class HyperLayer(nn.Module):
             loss.backward(create_graph=True) # !! Have to do this
             
             self.opt.step(sgd_iter) if isinstance(self.opt, HSGD) else self.opt.step()
+    
+    def _validate(self, X, y):
+        preds = to_numpy(self.net(X)).argmax(1)
+        act = to_numpy(y).argmax(1)
+        return (preds == act).mean()
     
     def _untrain(self, X, y, num_iters, batch_size):
         
