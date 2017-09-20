@@ -14,7 +14,6 @@ from torch.autograd import Variable
 
 from helpers import to_numpy
 from hsgd import HSGD
-# from hsgd import HSGD2 as HSGD
 
 class HyperLayer(nn.Module):
     def __init__(self, X, y, num_iters, batch_size, seed=0):
@@ -37,7 +36,7 @@ class HyperLayer(nn.Module):
         self.orig_weights = to_numpy(self.opt._get_flat_params())
         
         # Run hyperstep
-        self._train(self.X, self.y, self.num_iters, self.batch_size)
+        self.loss_hist, self.acc_hist = self._train(self.X, self.y, self.num_iters, self.batch_size)
         self.val_acc = self._validate(*val_data) if val_data else None
         self._untrain(self.X, self.y, self.num_iters, self.batch_size)
         
@@ -53,6 +52,7 @@ class HyperLayer(nn.Module):
     def _train(self, X, y, num_iters, batch_size):
         
         # Run forward
+        loss_hist, acc_hist = [], []
         for sgd_iter in tqdm(range(num_iters)):
             Xb, yb = self._deterministic_batch(X, y, batch_size, seed=(self.seed, sgd_iter))
             
@@ -62,20 +62,38 @@ class HyperLayer(nn.Module):
             loss.backward(create_graph=True) # !! Have to do this
             
             self.opt.step(sgd_iter) if isinstance(self.opt, HSGD) else self.opt.step()
+            
+            loss_hist.append(to_numpy(loss))
+            acc_hist.append(self._validate(scores=scores, y=yb))
+        
+        return np.hstack(loss_hist), np.hstack(acc_hist)
     
-    def _validate(self, X, y):
-        preds = to_numpy(self.net(X)).argmax(1)
-        act = to_numpy(y).argmax(1)
+    def _validate(self, X=None, y=None, scores=None):
+        if scores is None:
+            scores = self.net(X)
+        
+        preds = to_numpy(scores).argmax(1)
+        act = to_numpy(y)
         return (preds == act).mean()
     
     def _untrain(self, X, y, num_iters, batch_size):
+        self.opt.zero_grad()
         
-        # Initialize backward
+        # Initialize backward -- method 1 (not scalable)
         def lf_all():
             return F.cross_entropy(self.net(X), y)
         
-        self.opt.zero_grad()
         self.opt.init_backward(lf_all)
+        
+        # Initialize backward -- method 2 (scalable)
+        # for chunk in np.array_split(np.arange(X.size(0)), 10):
+        #     chunk = torch.LongTensor(chunk).cuda()
+        #     loss = F.cross_entropy(self.net(X[chunk]), y[chunk], size_average=False)
+        #     loss.backward()
+        
+        # g = self.opt._flatten([p.grad for p in self.opt.params]).data
+        # g /= X.size(0)
+        # self.opt.backward_ready = True
         
         # Run backward
         for sgd_iter in tqdm(range(num_iters)[::-1]):

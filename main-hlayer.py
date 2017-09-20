@@ -18,7 +18,7 @@ from torch import nn, autograd
 from torch.nn import functional as F
 from torch.autograd import Variable
 
-from hypergrad.data import load_data_dicts
+from hypergrad.data import load_data
 
 from rsub import *
 from matplotlib import pyplot as plt
@@ -33,20 +33,16 @@ _ = torch.cuda.manual_seed(789)
 # --
 # IO
 
-batch_size  = 200
-num_iters   = 100
-N_classes   = 10
-N_train     = 10000
-N_valid     = 10000
-N_tests     = 10000
+batch_size = 200
+num_iters = 100
 
-train_data, valid_data, _ = load_data_dicts(N_train, N_valid, N_tests)
+X_train, y_train, X_val, y_val, _ = load_data(normalize=True)
 
-X_train = Variable(torch.FloatTensor(train_data['X'])).cuda()
-y_train = Variable(torch.LongTensor(train_data['T'].argmax(axis=1))).cuda()
+X_train = Variable(torch.FloatTensor(X_train)).cuda()
+y_train = Variable(torch.LongTensor(y_train.argmax(axis=1))).cuda()
 
-X_val = Variable(torch.FloatTensor(valid_data['X'])).cuda()
-y_val = Variable(torch.FloatTensor(valid_data['T'])).cuda()
+X_val = Variable(torch.FloatTensor(X_val)).cuda()
+y_val = Variable(torch.FloatTensor(y_val.argmax(axis=1))).cuda()
 
 # --
 # Helpers
@@ -72,7 +68,7 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
 # --
 # Run
 
-lr_mean = Variable(torch.FloatTensor(np.full((1, 8), 0.01)).cuda(), requires_grad=True)
+lr_mean = Variable(torch.FloatTensor(np.full((1, 8), 0.1)).cuda(), requires_grad=True)
 lr_res  = Variable(torch.FloatTensor(np.full((num_iters, 8), 0.0)).cuda(), requires_grad=True)
 
 mo_mean  = Variable(torch.FloatTensor(np.full((1, 8), 0.5)).cuda(), requires_grad=True)
@@ -82,23 +78,44 @@ hopt = torch.optim.Adam([lr_mean, lr_res, mo_mean, mo_res], lr=0.01)
 
 hist = defaultdict(list)
 
-for meta_iter in range(50):
+reg_strength = 0.0
+for meta_iter in range(0, 200):
+    print 'meta_iter=%d' % meta_iter
     
     # Transform hyperparameters
-    lrs_ = torch.clamp(lr_mean + lr_res, 0.001, 10.0)
-    mos_ = torch.clamp(mo_mean + mo_res, 0.001, 0.999)
+    lrs = torch.clamp(lr_mean + lr_res, 0.001, 10.0)
+    mos = torch.clamp(mo_mean + mo_res, 0.001, 0.999)
     
     # Do hyperstep
     hopt.zero_grad()
     net = make_net().cuda()
-    h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=meta_iter)
-    dummy_loss = h(net, lrs_, mos_, val_data=(X_val, y_val))
-    print 'val_acc=%f' % h.val_acc
+    h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=0)
+    dummy_loss = h(net, lrs, mos, val_data=(X_val, y_val))
     
-    loss = dummy_loss
+    # reg_loss = reg_strength * F.relu(lr_res[1:] - lr_res[:-1] - 0.01).sum()
+    
+    loss = dummy_loss# + reg_loss
     loss.backward()
     hopt.step()
     
+    print 'print val_acc=%f | loss_hist.tail.mean=%f | acc_hist.tail.mean=%f | reg_loss=%f' % (
+        h.val_acc,
+        h.loss_hist[-10:].mean(),
+        h.acc_hist[-10:].mean(),
+        to_numpy(reg_loss)[0],
+    )
+    
     hist['val_acc'].append(h.val_acc)
+    hist['lrs'].append(to_numpy(lrs))
+    hist['mos'].append(to_numpy(mos))
 
 
+for l in hist['mos'][-1].T[::2]:
+    _ = plt.plot(l)
+
+show_plot()
+
+
+_ = plt.plot(np.hstack(hist['val_acc']))
+_ = plt.ylim(0.9, 1.0)
+show_plot()
