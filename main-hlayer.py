@@ -42,7 +42,7 @@ X_train = Variable(torch.FloatTensor(X_train)).cuda()
 y_train = Variable(torch.LongTensor(y_train.argmax(axis=1))).cuda()
 
 X_val = Variable(torch.FloatTensor(X_val)).cuda()
-y_val = Variable(torch.FloatTensor(y_val.argmax(axis=1))).cuda()
+y_val = Variable(torch.LongTensor(y_val.argmax(axis=1))).cuda()
 
 # --
 # Helpers
@@ -68,13 +68,24 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
 # --
 # Run
 
-lr_mean = Variable(torch.FloatTensor(np.full((1, 8), 0.1)).cuda(), requires_grad=True)
+# val_acc_hist = {}
+hyper_lr = 0.1
+init_lr = 0.10
+init_mo = 0.50
+
+_ = torch.manual_seed(123)
+_ = torch.cuda.manual_seed(123)
+fix_data = False
+
+net = make_net().cuda()
+
+lr_mean = Variable(torch.FloatTensor(np.full((1, 8), init_lr)).cuda(), requires_grad=True)
 lr_res  = Variable(torch.FloatTensor(np.full((num_iters, 8), 0.0)).cuda(), requires_grad=True)
 
-mo_mean  = Variable(torch.FloatTensor(np.full((1, 8), 0.5)).cuda(), requires_grad=True)
+mo_mean  = Variable(torch.FloatTensor(np.full((1, 8), init_mo)).cuda(), requires_grad=True)
 mo_res  = Variable(torch.FloatTensor(np.full((num_iters, 8), 0.0)).cuda(), requires_grad=True)
 
-hopt = torch.optim.Adam([lr_mean, lr_res, mo_mean, mo_res], lr=0.01)
+hopt = torch.optim.SGD([lr_mean, lr_res, mo_mean, mo_res], lr=hyper_lr)
 
 hist = defaultdict(list)
 
@@ -88,8 +99,7 @@ for meta_iter in range(0, 200):
     
     # Do hyperstep
     hopt.zero_grad()
-    net = make_net().cuda()
-    h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=0)
+    h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=0 if fix_data else meta_iter)
     dummy_loss = h(net, lrs, mos, val_data=(X_val, y_val))
     
     # reg_loss = reg_strength * F.relu(lr_res[1:] - lr_res[:-1] - 0.01).sum()
@@ -102,7 +112,8 @@ for meta_iter in range(0, 200):
         h.val_acc,
         h.loss_hist[-10:].mean(),
         h.acc_hist[-10:].mean(),
-        to_numpy(reg_loss)[0],
+        # to_numpy(reg_loss)[0],
+        0
     )
     
     hist['val_acc'].append(h.val_acc)
@@ -116,6 +127,8 @@ for l in hist['mos'][-1].T[::2]:
 show_plot()
 
 
-_ = plt.plot(np.hstack(hist['val_acc']))
+val_acc_hist[(hyper_lr, init_lr, init_mo)] = np.hstack(hist['val_acc'])
+_ = [plt.plot(v, alpha=0.25, label=k) for k,v in val_acc_hist.items()]
+_ = plt.legend(loc='lower right')
 _ = plt.ylim(0.9, 1.0)
 show_plot()

@@ -4,6 +4,8 @@
     hlayer.py
 """
 
+import os
+import copy
 import numpy as np
 from tqdm import tqdm
 
@@ -14,6 +16,13 @@ from torch.autograd import Variable
 
 from helpers import to_numpy
 from hsgd import HSGD
+
+if torch.__version__ != '0.2.0+9b8f5eb_dev':
+    os._exit(1)
+else:
+    # !! Ordinarily forces use of best algorithm, but hacked to use default (determnistic) ops
+    torch.backends.cudnn.benchmark = True
+
 
 class HyperLayer(nn.Module):
     def __init__(self, X, y, num_iters, batch_size, seed=0):
@@ -38,7 +47,10 @@ class HyperLayer(nn.Module):
         # Run hyperstep
         self.loss_hist, self.acc_hist = self._train(self.X, self.y, self.num_iters, self.batch_size)
         self.val_acc = self._validate(*val_data) if val_data else None
-        self._untrain(self.X, self.y, self.num_iters, self.batch_size)
+        
+        state = copy.deepcopy(self.net.state_dict())
+        self._untrain(self.X, self.y, val_data[0], val_data[1], self.num_iters, self.batch_size)
+        self.net.load_state_dict(state)
         
         # Return dummy loss, so we can propagate errors
         tmp = super(HyperLayer, self).__call__(self.lrs, self.mos)
@@ -76,12 +88,12 @@ class HyperLayer(nn.Module):
         act = to_numpy(y)
         return (preds == act).mean()
     
-    def _untrain(self, X, y, num_iters, batch_size):
+    def _untrain(self, X, y, X_val, y_val, num_iters, batch_size):
         self.opt.zero_grad()
         
         # Initialize backward -- method 1 (not scalable)
         def lf_all():
-            return F.cross_entropy(self.net(X), y)
+            return F.cross_entropy(self.net(X_val), y_val)
         
         self.opt.init_backward(lf_all)
         
@@ -93,6 +105,7 @@ class HyperLayer(nn.Module):
         
         # g = self.opt._flatten([p.grad for p in self.opt.params]).data
         # g /= X.size(0)
+        # self.opt.d_x = g
         # self.opt.backward_ready = True
         
         # Run backward
