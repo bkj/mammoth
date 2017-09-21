@@ -1,30 +1,30 @@
 #!/usr/bin/env python
 
 """
-    run.py
+    main-hlayer.py
 """
 
 import sys
-sys.path.append('/home/bjohnson/software/autograd/')
 sys.path.append('/home/bjohnson/software/hypergrad')
 
+import h5py
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+from collections import defaultdict
 
 import torch
-from torch import nn
+from torch import nn, autograd
 from torch.nn import functional as F
 from torch.autograd import Variable
 
-from hypergrad.data import load_data_dicts
-from hypergrad.util import RandomState
+from hypergrad.data import load_data
 
 from rsub import *
 from matplotlib import pyplot as plt
 
 from helpers import to_numpy
-from hsgd import HSGD
+from hlayer import HyperLayer
 
 np.random.seed(123)
 _ = torch.manual_seed(456)
@@ -33,38 +33,19 @@ _ = torch.cuda.manual_seed(789)
 # --
 # IO
 
-batch_size  = 200
-num_iters   = 100
-N_classes   = 10
-N_train     = 10000
-N_valid     = 10000
-N_tests     = 10000
+batch_size = 200
+num_iters = 100
 
-train_data, valid_data, _ = load_data_dicts(N_train, N_valid, N_tests)
+X_train, y_train, X_val, y_val, _ = load_data(normalize=True)
 
-X_train = Variable(torch.DoubleTensor(train_data['X'])).cuda()
-y_train = Variable(torch.LongTensor(train_data['T'].argmax(axis=1))).cuda()
+X_train = Variable(torch.FloatTensor(X_train)).cuda()
+y_train = Variable(torch.LongTensor(y_train.argmax(axis=1))).cuda()
 
-X_val = Variable(torch.DoubleTensor(valid_data['X'])).cuda()
-y_val = valid_data['T'].argmax(axis=1)
+X_val = Variable(torch.FloatTensor(X_val)).cuda()
+y_val = Variable(torch.LongTensor(y_val.argmax(axis=1))).cuda()
 
 # --
 # Helpers
-
-logit = lambda x: 1 / (1 + (-x).exp())
-d_logit = lambda x: x.exp() / ((1 + x.exp()) ** 2) # derivative of logit
-d_exp = lambda x: x.exp() # derivative of exponent
-
-def set_net_weights(net, val):
-    offset = 0
-    for p in net.parameters():
-        numel = p.numel()
-        if len(p.size()) == 1:
-            p.data.set_(val[offset:offset + numel].view_as(p.data))
-        else:
-            p.data.set_(val[offset:offset + numel].view_as(p.data.t()).t()) # !! autograd ordering
-        offset += numel
-    print offset
 
 def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
     
@@ -76,132 +57,63 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
         nn.Linear(layers[1], layers[2]),
         nn.Tanh(),
         nn.Linear(layers[2], 10),
-        nn.LogSoftmax(),
     )
     
     for child in net.children():
         if isinstance(child, nn.Linear):
             _ = child.weight.data.normal_(0, weight_scale)
     
-    net = net.double()
     return net
-
-
-def deterministic_batch(X, y, sgd_iter, meta_iter, seed=0, batch_size=batch_size):
-    rs = RandomState((seed, meta_iter, sgd_iter))
-    idxs = rs.randint(X.size(0), size=batch_size)
-    idxs = torch.LongTensor(idxs).cuda()
-    X, y = X[idxs], y[idxs]
-    return X, y
-
-
-def train(net, opt, num_iters, meta_iter, seed=0):
-    train_hist, val_hist = [], []
-    for i in tqdm(range(num_iters)):
-        X, y = deterministic_batch(X_train, y_train, sgd_iter=i, meta_iter=meta_iter, seed=0)
-        
-        opt.zero_grad()
-        scores = net(X)
-        loss = F.cross_entropy(scores, y)
-        loss.backward(create_graph=True)
-        
-        opt.step(i) if isinstance(opt, HSGD) else opt.step()
-        
-        train_acc = (to_numpy(net(X_train)).argmax(1) == to_numpy(y_train)).mean()
-        train_hist.append(train_acc)
-        
-        val_acc = (to_numpy(net(X_val)).argmax(1) == y_val).mean()
-        val_hist.append(val_acc)
-    
-    return opt, val_hist, train_hist
-
-
-def untrain(net, opt, num_iters, meta_iter, seed=0):
-    for i in tqdm(range(num_iters)[::-1]):
-        X, y = deterministic_batch(X_train, y_train, sgd_iter=i, meta_iter=meta_iter, seed=0)
-        
-        def lf():
-            return F.cross_entropy(net(X), y)
-        
-        opt.unstep(lf, i)
-    
-    return opt
-
-
-def do_meta_iter(meta_iter, net, lrs, mos):
-    opt = HSGD(
-        params=net.parameters(),
-        lrs=lrs.exp(),
-        mos=logit(mos),
-    )
-    
-    orig_weights = to_numpy(opt._get_flat_params())
-    
-    # Train
-    opt, val_hist, train_hist = train(net, opt, num_iters=num_iters, meta_iter=meta_iter, seed=0)
-    trained_weights = to_numpy(opt._get_flat_params())
-    print {"train_acc" : train_hist[-1], "val_acc" : val_hist[-1]}
-    
-    # Init untrain
-    def lf_all():
-        return F.cross_entropy(net(X_train), y_train)
-    
-    opt.init_backward(lf_all)
-    
-    # Untrain
-    opt = untrain(net, opt, num_iters, meta_iter)
-    untrained_weights = to_numpy(opt._get_flat_params())
-    assert np.all(orig_weights == untrained_weights), 'meta_iter: orig_weights != untrained_weights'
-    
-    return opt, val_hist, train_hist
 
 # --
 # Run
 
-
-lrs = torch.DoubleTensor(np.full((num_iters, 8), -1.0)).cuda()
-mos = torch.DoubleTensor(np.full((num_iters, 8), 0.0)).cuda()
-
+hyper_lr = 0.1
+init_lr = 0.10
+init_mo = 0.50
+fix_data = False
 meta_iters = 50
 
-b1 = 0.1
-b2 = 0.01
-eps = 10 ** -4
-lam = 10 ** -4
-step_size = 0.04
+_ = torch.manual_seed(123)
+_ = torch.cuda.manual_seed(123)
 
-m = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(mos.size()).double().cuda()]
-v = [torch.zeros(lrs.size()).double().cuda(), torch.zeros(mos.size()).double().cuda()]
 
-all_val_hists, all_train_hists = [], []
-for meta_iter in range(meta_iters):
-    print "\nmeta_iter=%d" % meta_iter
+n_groups = len(list(make_net().parameters()))
+
+lr_mean = Variable(torch.FloatTensor(np.full((1, n_groups), init_lr)).cuda(), requires_grad=True)
+lr_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda(), requires_grad=True)
+
+mo_mean = Variable(torch.FloatTensor(np.full((1, n_groups), init_mo)).cuda(), requires_grad=True)
+mo_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda(), requires_grad=True)
+
+hopt = torch.optim.SGD([lr_mean, lr_res, mo_mean, mo_res], lr=hyper_lr)
+
+hist = defaultdict(list)
+
+reg_strength = 0.0
+for meta_iter in range(0, meta_iters):
+    print 'meta_iter=%d' % meta_iter
     
-    net = make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]).cuda()
-    opt, val_hist, train_hist = do_meta_iter(meta_iter, net, lrs, mos)
-    all_train_hists.append(train_hist)
-    all_val_hists.append(val_hist)
+    # Transform hyperparameters
+    lrs = torch.clamp(lr_mean + lr_res, 0.001, 10.0)
+    mos = torch.clamp(mo_mean + mo_res, 0.001, 0.999)
     
-    # ADAM step -- need to apply to all hypergrads
-    b1t = 1 - (1 - b1) * (lam ** meta_iter)
+    # Do hyperstep
+    hopt.zero_grad()
+    net = make_net().cuda()
+    h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=0 if fix_data else meta_iter)
+    dummy_loss = h(net, lrs, mos, val_data=(X_val, y_val))
     
-    g = opt.d_lrs * d_exp(lrs) # !!
-    m[0] = b1t * g + (1-b1t) * m[0]
-    v[0] = b2 * (g ** 2) + (1 - b2) * v[0]
-    mhat = m[0] / (1 - (1 - b1) ** (meta_iter + 1))
-    vhat = v[0] / (1 - (1 - b2) ** (meta_iter + 1))
-    lrs -= step_size * mhat / (vhat.sqrt() + eps)
+    loss = dummy_loss
+    loss.backward()
+    hopt.step()
     
-    g = opt.d_mos * d_logit(mos) # !!
-    m[1] = b1t * g + (1-b1t) * m[1]
-    v[1] = b2 * (g ** 2) + (1 - b2) * v[1]
-    mhat = m[1] / (1 - (1 - b1) ** (meta_iter + 1))
-    vhat = v[1] / (1 - (1 - b2) ** (meta_iter + 1))
-    mos -= step_size * mhat / (vhat.sqrt() + eps)
-
-
-cm = np.linspace(0, 1, len(all_val_hists))
-for i, v in enumerate(all_val_hists):
-    _ = plt.plot(v, c=plt.cm.rainbow(cm[i]), alpha=0.25)
-
-show_plot()
+    print 'print val_acc=%f | loss_hist.tail.mean=%f | acc_hist.tail.mean=%f' % (
+        h.val_acc,
+        h.loss_hist[-10:].mean(),
+        h.acc_hist[-10:].mean(),
+    )
+    
+    hist['val_acc'].append(h.val_acc)
+    hist['lrs'].append(to_numpy(lrs))
+    hist['mos'].append(to_numpy(mos))
