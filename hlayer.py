@@ -49,7 +49,7 @@ class HyperLayer(nn.Module):
         self.val_acc = self._validate(*val_data) if val_data else None
         
         state = copy.deepcopy(self.net.state_dict())
-        self._untrain(self.X, self.y, val_data[0], val_data[1], self.num_iters, self.batch_size)
+        self._untrain(self.X, self.y, self.num_iters, self.batch_size)
         self.net.load_state_dict(state)
         
         # Return dummy loss, so we can propagate errors
@@ -88,12 +88,12 @@ class HyperLayer(nn.Module):
         act = to_numpy(y)
         return (preds == act).mean()
     
-    def _untrain(self, X, y, X_val, y_val, num_iters, batch_size):
+    def _untrain(self, X, y, num_iters, batch_size):
         self.opt.zero_grad()
         
         # Initialize backward -- method 1 (not scalable)
         def lf_all():
-            return F.cross_entropy(self.net(X_val), y_val)
+            return F.cross_entropy(self.net(X), y)
         
         self.opt.init_backward(lf_all)
         
