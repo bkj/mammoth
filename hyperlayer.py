@@ -36,7 +36,7 @@ class HyperLayer(nn.Module):
         
         self.register_backward_hook(HyperLayer._backward_hook)
     
-    def __call__(self, net, lrs, mos, val_data=None, szs=None, comb_weight=0.0):
+    def __call__(self, net, lrs, mos, val_data=None, szs=None, cheap=False):
         self.net = net
         self.lrs = lrs
         self.mos = mos
@@ -49,7 +49,7 @@ class HyperLayer(nn.Module):
         self.val_acc = self._validate(*val_data) if val_data else None
         
         state = copy.deepcopy(self.net.state_dict())
-        self._untrain(self.X, self.y, self.num_iters, self.batch_size, comb_weight=comb_weight)
+        self._untrain(self.X, self.y, self.num_iters, self.batch_size, cheap=cheap)
         self.net.load_state_dict(state)
         
         # Return dummy loss, so we can propagate errors
@@ -88,7 +88,7 @@ class HyperLayer(nn.Module):
         act = to_numpy(y)
         return (preds == act).mean()
     
-    def _untrain(self, X, y, num_iters, batch_size, comb_weight=0.0):
+    def _untrain(self, X, y, num_iters, batch_size, cheap=False):
         self.opt.zero_grad()
         
         # Initialize backward -- method 1 (not scalable)
@@ -116,7 +116,11 @@ class HyperLayer(nn.Module):
                 return F.cross_entropy(self.net(Xb), yb)
             
             self.opt.zero_grad()
-            self.opt.unstep(lf, sgd_iter, comb_weight=comb_weight)
+            if cheap:
+                self.opt.unstep_cheap(lf, sgd_iter)
+            else:
+                self.opt.unstep(lf, sgd_iter)
+            
         
         # Check that backward worked correctly
         untrained_weights = to_numpy(self.opt._get_flat_params())

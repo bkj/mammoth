@@ -149,7 +149,7 @@ class HSGD():
         self.g_data = self.d_x.clone()
         self.backward_ready = True
         
-    def unstep(self, lf, sgd_iter, comb_weight=0.0):
+    def unstep(self, lf, sgd_iter):
         assert self.backward_ready, 'backward_ready = False'
         
         lr = self._fill_parser(self.lrs[sgd_iter])
@@ -157,8 +157,7 @@ class HSGD():
         
         # Update learning rate
         for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-            comb_grad = (1.0 - comb_weight) * self.d_x + comb_weight * self.g_data
-            self.d_lrs[sgd_iter,j] = torch.dot(comb_grad[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
+            self.d_lrs[sgd_iter,j] = torch.dot(self.d_x[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
         
         # Reverse SGD exactly
         _ = self.eX.sub(lr * self.eV.val)
@@ -183,6 +182,32 @@ class HSGD():
             self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
         
         self.d_v = self.d_v * mo
+    
+    def unstep_cheap(self, lf, sgd_iter):
+        assert self.backward_ready, 'backward_ready = False'
+        
+        lr = self._fill_parser(self.lrs[sgd_iter])
+        mo = self._fill_parser(self.mos[sgd_iter])
+        
+        # Update learning rate
+        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
+            self.d_lrs[sgd_iter,j] = torch.dot(self.g_data[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
+        
+        self.d_v += self.g_data * lr
+        
+        # Reverse SGD exactly
+        _ = self.eX.sub(lr * self.eV.val)
+        self._set_flat_params(self.eX.val)
+        g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
+        self.g_data = g.data
+        _ = self.eV.add(g.data).unmul(mo)
+        
+        # Update mo
+        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
+            self.d_mos[sgd_iter,j] = torch.dot(self.d_v[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
+        
+        # !! Do we want this?  Have to do the actual deriviation
+        # self.d_v = self.d_v * mo
 
 
 # --
