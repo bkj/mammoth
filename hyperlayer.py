@@ -18,6 +18,7 @@ from helpers import to_numpy
 from hsgd import HSGD
 
 if torch.__version__ != '0.2.0+9b8f5eb_dev':
+    raise Exception("torch.__version__ != '0.2.0+9b8f5eb_dev'")
     os._exit(1)
 else:
     # !! Ordinarily forces use of best algorithm, but hacked to use default (determnistic) ops
@@ -92,21 +93,21 @@ class HyperLayer(nn.Module):
         self.opt.zero_grad()
         
         # Initialize backward -- method 1 (not scalable)
-        def lf_all():
-            return F.cross_entropy(self.net(X), y)
+        # def lf_all():
+        #     return F.cross_entropy(self.net(X), y)
         
-        self.opt.init_backward(lf_all)
+        # self.opt.init_backward(lf_all)
         
         # Initialize backward -- method 2 (scalable)
-        # for chunk in np.array_split(np.arange(X.size(0)), 10):
-        #     chunk = torch.LongTensor(chunk).cuda()
-        #     loss = F.cross_entropy(self.net(X[chunk]), y[chunk], size_average=False)
-        #     loss.backward()
+        for chunk in np.array_split(np.arange(X.size(0)), 10):
+            chunk = torch.LongTensor(chunk).cuda()
+            loss = F.cross_entropy(self.net(X[chunk]), y[chunk], size_average=False)
+            loss.backward()
         
-        # g = self.opt._flatten([p.grad for p in self.opt.params]).data
-        # g /= X.size(0)
-        # self.opt.d_x = g
-        # self.opt.backward_ready = True
+        g = self.opt._flatten([p.grad for p in self.opt.params]).data
+        g /= X.size(0)
+        self.opt.d_x = g
+        self.opt.backward_ready = True
         
         # Run backward
         for sgd_iter in tqdm(range(num_iters)[::-1]):

@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-    main-hlayer.py
+    main.py
 """
 
 import sys
@@ -24,7 +24,7 @@ from rsub import *
 from matplotlib import pyplot as plt
 
 from helpers import to_numpy
-from hlayer import HyperLayer
+from hyperlayer import HyperLayer
 
 np.random.seed(123)
 _ = torch.manual_seed(456)
@@ -68,15 +68,14 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
 # --
 # Run
 
-hyper_lr = 0.1
+hyper_lr = 0.01
 init_lr = 0.10
 init_mo = 0.50
 fix_data = False
-meta_iters = 50
+meta_iters = 200
 
 _ = torch.manual_seed(123)
 _ = torch.cuda.manual_seed(123)
-
 
 n_groups = len(list(make_net().parameters()))
 
@@ -86,11 +85,10 @@ lr_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda()
 mo_mean = Variable(torch.FloatTensor(np.full((1, n_groups), init_mo)).cuda(), requires_grad=True)
 mo_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda(), requires_grad=True)
 
-hopt = torch.optim.SGD([lr_mean, lr_res, mo_mean, mo_res], lr=hyper_lr)
+hopt = torch.optim.Adam([lr_mean, lr_res, mo_mean, mo_res], lr=hyper_lr)
 
 hist = defaultdict(list)
 
-reg_strength = 0.0
 for meta_iter in range(0, meta_iters):
     print 'meta_iter=%d' % meta_iter
     
@@ -117,3 +115,9 @@ for meta_iter in range(0, meta_iters):
     hist['val_acc'].append(h.val_acc)
     hist['lrs'].append(to_numpy(lrs))
     hist['mos'].append(to_numpy(mos))
+
+
+for l in to_numpy(lrs).T[::2]:
+    _ = plt.plot(l, alpha=0.25)
+
+show_plot()
