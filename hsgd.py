@@ -146,9 +146,10 @@ class HSGD():
     def init_backward(self, lf):
         assert self.forward_ready, 'cannot init_backward before calling HSGD.step'
         self.d_x = self._flatten(autograd.grad(lf(), self.params)).data
+        self.g_data = self.d_x.clone()
         self.backward_ready = True
         
-    def unstep(self, lf, sgd_iter):
+    def unstep(self, lf, sgd_iter, comb_weight=0.0):
         assert self.backward_ready, 'backward_ready = False'
         
         lr = self._fill_parser(self.lrs[sgd_iter])
@@ -156,12 +157,14 @@ class HSGD():
         
         # Update learning rate
         for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-            self.d_lrs[sgd_iter,j] = torch.dot(self.d_x[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
+            comb_grad = (1.0 - comb_weight) * self.d_x + comb_weight * self.g_data
+            self.d_lrs[sgd_iter,j] = torch.dot(comb_grad[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
         
         # Reverse SGD exactly
         _ = self.eX.sub(lr * self.eV.val)
         self._set_flat_params(self.eX.val)
         g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
+        self.g_data = g.data
         _ = self.eV.add(g.data).unmul(mo)
         
         # Update mo

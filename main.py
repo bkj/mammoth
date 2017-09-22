@@ -24,7 +24,7 @@ from rsub import *
 from matplotlib import pyplot as plt
 
 from helpers import to_numpy
-from hlayer import HyperLayer
+from hyperlayer import HyperLayer
 
 np.random.seed(123)
 _ = torch.manual_seed(456)
@@ -68,8 +68,8 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
 # --
 # Run
 
-hyper_lr = 0.1
-init_lr = 0.10
+hyper_lr = 0.01
+init_lr = 0.30
 init_mo = 0.50
 fix_data = False
 meta_iters = 50
@@ -86,11 +86,10 @@ lr_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda()
 mo_mean = Variable(torch.FloatTensor(np.full((1, n_groups), init_mo)).cuda(), requires_grad=True)
 mo_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda(), requires_grad=True)
 
-hopt = torch.optim.SGD([lr_mean, lr_res, mo_mean, mo_res], lr=hyper_lr)
+hopt = torch.optim.Adam([lr_mean, lr_res, mo_mean, mo_res], lr=hyper_lr)
 
 hist = defaultdict(list)
 
-reg_strength = 0.0
 for meta_iter in range(0, meta_iters):
     print 'meta_iter=%d' % meta_iter
     
@@ -115,5 +114,22 @@ for meta_iter in range(0, meta_iters):
     )
     
     hist['val_acc'].append(h.val_acc)
+    hist['loss_hist'].append(h.loss_hist)
+    hist['acc_hist'].append(h.acc_hist)
     hist['lrs'].append(to_numpy(lrs))
     hist['mos'].append(to_numpy(mos))
+
+
+# comb_hist = hist
+
+_ = plt.plot(hist['val_acc'])
+_ = plt.plot(comb_hist['val_acc'])
+show_plot()
+
+for l in hist['lrs'][-1].T[::2]:
+    _ = plt.plot(l)
+
+show_plot()
+
+_ = plt.plot(h.acc_hist)
+show_plot()
