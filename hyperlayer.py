@@ -92,21 +92,23 @@ class HyperLayer(nn.Module):
         self.opt.zero_grad()
         
         # Initialize backward -- method 1 (not scalable)
-        def lf_all():
-            return F.cross_entropy(self.net(X), y)
+        # try:
+        #     def lf_all():
+        #         return F.cross_entropy(self.net(X), y)
+            
+        #     self.opt.init_backward(lf_all)
+        # except:
+        # Initialize backward -- method 2 (scalable, untested)
+        for chunk in np.array_split(np.arange(X.size(0)), 10):
+            chunk = torch.LongTensor(chunk).cuda()
+            loss = F.cross_entropy(self.net(X[chunk]), y[chunk], size_average=False)
+            loss.backward()
         
-        self.opt.init_backward(lf_all)
-        
-        # Initialize backward -- method 2 (scalable)
-        # for chunk in np.array_split(np.arange(X.size(0)), 10):
-        #     chunk = torch.LongTensor(chunk).cuda()
-        #     loss = F.cross_entropy(self.net(X[chunk]), y[chunk], size_average=False)
-        #     loss.backward()
-        
-        # g = self.opt._flatten([p.grad for p in self.opt.params]).data
-        # g /= X.size(0)
-        # self.opt.d_x = g
-        # self.opt.backward_ready = True
+        g = self.opt._flatten([p.grad for p in self.opt.params]).data
+        g /= X.size(0)
+        self.opt.d_x = g
+        self.opt.g_data = self.opt.d_x.clone()
+        self.opt.backward_ready = True
         
         # Run backward
         for sgd_iter in tqdm(range(num_iters)[::-1]):
@@ -117,7 +119,7 @@ class HyperLayer(nn.Module):
             
             self.opt.zero_grad()
             if cheap:
-                self.opt.unstep_cheap(lf, sgd_iter)
+                self.opt.unstep_cheap(lf, sgd_iter, one_step=False)
             else:
                 self.opt.unstep(lf, sgd_iter)
             
