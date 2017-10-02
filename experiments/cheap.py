@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-    main.py
+    main-cheap.py
 """
 
 import sys
@@ -69,11 +69,11 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
 # Run
 
 hyper_lr = 0.01
-init_lr = 0.10
+init_lr = 0.30
 init_mo = 0.50
 fix_data = False
-meta_iters = 200
-
+meta_iters = 50
+    
 _ = torch.manual_seed(123)
 _ = torch.cuda.manual_seed(123)
 
@@ -100,7 +100,7 @@ for meta_iter in range(0, meta_iters):
     hopt.zero_grad()
     net = make_net().cuda()
     h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=0 if fix_data else meta_iter)
-    dummy_loss = h(net, lrs, mos, val_data=(X_val, y_val))
+    dummy_loss = h(net, lrs, mos, val_data=(X_val, y_val), cheap=False)
     
     loss = dummy_loss
     loss.backward()
@@ -113,11 +113,26 @@ for meta_iter in range(0, meta_iters):
     )
     
     hist['val_acc'].append(h.val_acc)
+    hist['loss_hist'].append(h.loss_hist)
+    hist['acc_hist'].append(h.acc_hist)
     hist['lrs'].append(to_numpy(lrs))
     hist['mos'].append(to_numpy(mos))
 
 
-for l in to_numpy(lrs).T[::2]:
-    _ = plt.plot(l, alpha=0.25)
 
-show_plot()
+# _ = plt.plot(hist['val_acc'])
+# show_plot()
+
+# lrs = hist['lrs'][-1].T[::2]
+# for l in lrs:
+#     _ = plt.plot(l, alpha=0.25)
+
+# show_plot()
+
+# for i in range(len(all_hist)):
+#     ci = np.linspace(0, 1, len(hist['hist']['acc_hist']))
+#     for i,ah in enumerate(all_hist[i]['hist']['acc_hist']):
+#         _ = plt.plot(ah, alpha=0.25, c=plt.cm.rainbow(ci[i]))
+        
+#     show_plot()
+

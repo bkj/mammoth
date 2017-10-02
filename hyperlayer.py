@@ -37,7 +37,7 @@ class HyperLayer(nn.Module):
         
         self.register_backward_hook(HyperLayer._backward_hook)
     
-    def __call__(self, net, lrs, mos, val_data=None, szs=None):
+    def __call__(self, net, lrs, mos, val_data=None, szs=None, cheap=False):
         self.net = net
         self.lrs = lrs
         self.mos = mos
@@ -50,7 +50,7 @@ class HyperLayer(nn.Module):
         self.val_acc = self._validate(*val_data) if val_data else None
         
         state = copy.deepcopy(self.net.state_dict())
-        self._untrain(self.X, self.y, self.num_iters, self.batch_size)
+        self._untrain(self.X, self.y, self.num_iters, self.batch_size, cheap=cheap)
         self.net.load_state_dict(state)
         
         # Return dummy loss, so we can propagate errors
@@ -89,24 +89,27 @@ class HyperLayer(nn.Module):
         act = to_numpy(y)
         return (preds == act).mean()
     
-    def _untrain(self, X, y, num_iters, batch_size):
+    def _untrain(self, X, y, num_iters, batch_size, cheap=False):
         self.opt.zero_grad()
         
-        # Initialize backward -- method 1 (not scalable)
-        # def lf_all():
-        #     return F.cross_entropy(self.net(X), y)
+        try:
+            # Initialize backward -- method 1 (not scalable)
+            def lf_all():
+                return F.cross_entropy(self.net(X), y)
+            
+            self.opt.init_backward(lf_all)
+        except:
+            # Initialize backward -- method 2 (scalable, less tested)
+            for chunk in np.array_split(np.arange(X.size(0)), 10):
+                chunk = torch.LongTensor(chunk).cuda()
+                loss = F.cross_entropy(self.net(X[chunk]), y[chunk], size_average=False)
+                loss.backward()
+            
+            g = self.opt._flatten([p.grad for p in self.opt.params]).data
+            g /= X.size(0)
+            self.opt.d_x = g
+            self.opt.g_data = self.opt.d_x.clone()
         
-        # self.opt.init_backward(lf_all)
-        
-        # Initialize backward -- method 2 (scalable)
-        for chunk in np.array_split(np.arange(X.size(0)), 10):
-            chunk = torch.LongTensor(chunk).cuda()
-            loss = F.cross_entropy(self.net(X[chunk]), y[chunk], size_average=False)
-            loss.backward()
-        
-        g = self.opt._flatten([p.grad for p in self.opt.params]).data
-        g /= X.size(0)
-        self.opt.d_x = g
         self.opt.backward_ready = True
         
         # Run backward
@@ -117,7 +120,11 @@ class HyperLayer(nn.Module):
                 return F.cross_entropy(self.net(Xb), yb)
             
             self.opt.zero_grad()
-            self.opt.unstep(lf, sgd_iter)
+            if cheap:
+                self.opt.unstep_cheap(lf, sgd_iter, one_step=False)
+            else:
+                self.opt.unstep(lf, sgd_iter)
+            
         
         # Check that backward worked correctly
         untrained_weights = to_numpy(self.opt._get_flat_params())
