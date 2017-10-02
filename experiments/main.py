@@ -6,6 +6,8 @@
 
 import sys
 sys.path.append('/home/bjohnson/software/hypergrad')
+from hypergrad.data import load_data
+# ^^ Should remove this dependency at some point, but whatever for now
 
 import h5py
 import numpy as np
@@ -18,11 +20,10 @@ from torch import nn, autograd
 from torch.nn import functional as F
 from torch.autograd import Variable
 
-from hypergrad.data import load_data
-
 from rsub import *
 from matplotlib import pyplot as plt
 
+sys.path.append('..')
 from helpers import to_numpy
 from hyperlayer import HyperLayer
 

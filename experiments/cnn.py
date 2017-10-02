@@ -38,32 +38,33 @@ else:
 batch_size  = 128
 num_iters   = 468 * 4
 
-# from keras.datasets import mnist
-# (X_train, y_train), (X_val, y_val) = mnist.load_data()
-
-# X_train = Variable(torch.FloatTensor(X_train.astype('float'))).cuda()
-# y_train = Variable(torch.LongTensor(y_train.astype('int'))).cuda()
-
-# X_val = Variable(torch.FloatTensor(X_val.astype('float'))).cuda()
-# y_val = Variable(torch.LongTensor(y_val.astype('int'))).cuda()
-
-# X_train = X_train.view(X_train.size(0), 1, 28, 28)
-# X_val = X_val.view(X_val.size(0), 1, 28, 28)
-
-# X_train = X_train.expand(X_train.size(0), 3, 28, 28)
-# X_val = X_val.expand(X_val.size(0), 3, 28, 28)
-
-# X_train, X_val = X_train / 255, X_val / 255
-
-# torch.save(X_train, open('.cnn_X_train', 'w'))
-# torch.save(y_train, open('.cnn_y_train', 'w'))
-# torch.save(X_val, open('.cnn_X_val', 'w'))
-# torch.save(y_val, open('.cnn_y_val', 'w'))
-
-X_train = torch.load(open('.cnn_X_train'))
-y_train = torch.load(open('.cnn_y_train'))
-X_val = torch.load(open('.cnn_X_val'))
-y_val = torch.load(open('.cnn_y_val'))
+if not os.path.exists('.cnn_X_train'):
+    from keras.datasets import mnist
+    (X_train, y_train), (X_val, y_val) = mnist.load_data()
+    
+    X_train = Variable(torch.FloatTensor(X_train.astype('float'))).cuda()
+    y_train = Variable(torch.LongTensor(y_train.astype('int'))).cuda()
+    
+    X_val = Variable(torch.FloatTensor(X_val.astype('float'))).cuda()
+    y_val = Variable(torch.LongTensor(y_val.astype('int'))).cuda()
+    
+    X_train = X_train.view(X_train.size(0), 1, 28, 28)
+    X_val = X_val.view(X_val.size(0), 1, 28, 28)
+    
+    X_train = X_train.expand(X_train.size(0), 3, 28, 28)
+    X_val = X_val.expand(X_val.size(0), 3, 28, 28)
+    
+    X_train, X_val = X_train / 255, X_val / 255
+    
+    torch.save(X_train, open('.cnn_X_train', 'w'))
+    torch.save(y_train, open('.cnn_y_train', 'w'))
+    torch.save(X_val, open('.cnn_X_val', 'w'))
+    torch.save(y_val, open('.cnn_y_val', 'w'))
+else:
+    X_train = torch.load(open('.cnn_X_train'))
+    y_train = torch.load(open('.cnn_y_train'))
+    X_val = torch.load(open('.cnn_X_val'))
+    y_val = torch.load(open('.cnn_y_val'))
 
 # --
 # Define network
