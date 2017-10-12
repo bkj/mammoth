@@ -2,8 +2,6 @@
 
 """
     hsgd.py
-    
-    !! Could use further testing
 """
 
 import numpy as np
@@ -18,6 +16,7 @@ from helpers import to_numpy
 
 # --
 # Set backend
+# `torch` uses the GPU, so should be dramatically faster
 
 etensor_backend = 'torch'
 if etensor_backend == 'torch':
@@ -26,6 +25,12 @@ elif etensor_backend == 'numpy':
     from exact_reps import ETensor_numpy as ETensor
 else:
     raise Exception('unknown etensor_backend=%s' % etensor_backend)
+
+# --
+# "Flat" HSGD
+#
+# Flattens parameter vector, which has it's tradeoffs
+# This is the preferred method for now
 
 class HSGD():
     def __init__(self, params, lrs, mos, mts=None, szs=None):
@@ -211,9 +216,11 @@ class HSGD():
 
 
 # --
-# Non-flattened version
+# non-"flat" HSGD
+# 
+# Preserves shapes of the parameter tensors
 
-class HSGD2():
+class RoundHSGD():
     """ !! Seems slower than previous implementation, though it's simpler, in a way """
     def __init__(self, params, lrs, mos, mts=None, szs=None):
         """

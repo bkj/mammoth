@@ -24,13 +24,8 @@ from rsub import *
 from matplotlib import pyplot as plt
 
 sys.path.append('/home/bjohnson/projects/mammoth')
-from helpers import to_numpy
+from helpers import to_numpy, set_seeds
 from hyperlayer import HyperLayer
-
-def set_seeds(seed):
-    _ = np.random.seed(seed)
-    _ = torch.manual_seed(seed)
-    _ = torch.cuda.manual_seed(seed)
 
 set_seeds(123)
 
@@ -128,5 +123,5 @@ for meta_iter in range(0, meta_iters):
     hist['mos'].append(to_numpy(mos))
 
 
-_ = plt.plot(hist['val_acc'])
-show_plot()
+# _ = plt.plot(hist['val_acc'])
+# show_plot()
