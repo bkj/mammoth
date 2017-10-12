@@ -2,6 +2,9 @@
 
 """
     main.py
+    
+    Example of running per-step learning rate and momentum tuning
+    on a toy MNIST network
 """
 
 import sys
@@ -9,10 +12,7 @@ sys.path.append('/home/bjohnson/software/hypergrad')
 from hypergrad.data import load_data
 # ^^ Should remove this dependency at some point, but whatever for now
 
-import h5py
 import numpy as np
-import pandas as pd
-from tqdm import tqdm
 from collections import defaultdict
 
 import torch
@@ -23,13 +23,16 @@ from torch.autograd import Variable
 from rsub import *
 from matplotlib import pyplot as plt
 
-sys.path.append('..')
+sys.path.append('/home/bjohnson/projects/mammoth')
 from helpers import to_numpy
 from hyperlayer import HyperLayer
 
-np.random.seed(123)
-_ = torch.manual_seed(456)
-_ = torch.cuda.manual_seed(789)
+def set_seeds(seed):
+    _ = np.random.seed(seed)
+    _ = torch.manual_seed(seed)
+    _ = torch.cuda.manual_seed(seed)
+
+set_seeds(123)
 
 # --
 # IO
@@ -67,17 +70,16 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
     return net
 
 # --
-# Run
+# Parameters
 
 hyper_lr = 0.01
-init_lr = 0.10
 init_lr = 0.30
 init_mo = 0.50
 fix_data = False
-meta_iters = 200
+meta_iters = 25
 
-_ = torch.manual_seed(123)
-_ = torch.cuda.manual_seed(123)
+# --
+# Parameterize learning rates + momentum
 
 n_groups = len(list(make_net().parameters()))
 
@@ -87,10 +89,16 @@ lr_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda()
 mo_mean = Variable(torch.FloatTensor(np.full((1, n_groups), init_mo)).cuda(), requires_grad=True)
 mo_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda(), requires_grad=True)
 
+# --
+# Hyper-optimizer
+
 hopt = torch.optim.Adam([lr_mean, lr_res, mo_mean, mo_res], lr=hyper_lr)
 
-hist = defaultdict(list)
+# --
+# Run
 
+set_seeds(123)
+hist = defaultdict(list)
 for meta_iter in range(0, meta_iters):
     print 'meta_iter=%d' % meta_iter
     
@@ -102,12 +110,11 @@ for meta_iter in range(0, meta_iters):
     hopt.zero_grad()
     net = make_net().cuda()
     h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=0 if fix_data else meta_iter)
-    dummy_loss = h(net, lrs, mos, val_data=(X_val, y_val))
-    
-    loss = dummy_loss
+    loss = h(net, lrs, mos, val_data=(X_val, y_val)) # !! This number is a meaningless hack to get gradients flowing
     loss.backward()
     hopt.step()
     
+    # Log
     print 'print val_acc=%f | loss_hist.tail.mean=%f | acc_hist.tail.mean=%f' % (
         h.val_acc,
         h.loss_hist[-10:].mean(),
@@ -122,12 +129,4 @@ for meta_iter in range(0, meta_iters):
 
 
 _ = plt.plot(hist['val_acc'])
-show_plot()
-
-for l in hist['lrs'][-1].T[::2]:
-    _ = plt.plot(l)
-
-show_plot()
-
-_ = plt.plot(h.acc_hist)
 show_plot()
