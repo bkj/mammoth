@@ -177,7 +177,7 @@ class HSGD():
         for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
             self.d_mos[sgd_iter,j] = torch.dot(self.d_v[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
         
-        # # Update auxilliary parameters
+        # Update auxilliary parameters
         d_vpar   = Parameter(self.d_v, requires_grad=True)
         lf_hvp_x = torch.dot(g, d_vpar)
         self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
