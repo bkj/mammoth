@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-    cnn-hlayer.py
+    cnn.py
 """
 
 import os
@@ -19,18 +19,12 @@ from torch.autograd import Variable
 from rsub import *
 from matplotlib import pyplot as plt
 
-from helpers import to_numpy
+from helpers import to_numpy, set_seeds
 from hyperlayer import HyperLayer
 
-np.random.seed(123)
-_ = torch.manual_seed(456)
-_ = torch.cuda.manual_seed(789)
-
-if torch.__version__ != '0.2.0+9b8f5eb_dev':
-    os._exit(1)
-else:
-    # !! Ordinarily forces use of best algorithm, but hacked to use default (determnistic) ops
-    torch.backends.cudnn.benchmark = True
+set_seeds(123)
+torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.deterministic = True
 
 # --
 # IO

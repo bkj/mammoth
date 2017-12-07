@@ -17,13 +17,8 @@ from torch.autograd import Variable
 from helpers import to_numpy
 from hsgd import HSGD
 
-if torch.__version__ != '0.2.0+9b8f5eb_dev':
-    raise Exception("torch.__version__ != '0.2.0+9b8f5eb_dev'")
-    os._exit(1)
-else:
-    # !! Ordinarily forces use of best algorithm, but hacked to use default (determnistic) ops
-    torch.backends.cudnn.benchmark = True
-
+torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.deterministic = True
 
 class HyperLayer(nn.Module):
     def __init__(self, X, y, num_iters, batch_size, seed=0):

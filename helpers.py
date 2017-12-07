@@ -18,4 +18,5 @@ def to_numpy(x):
 def set_seeds(seed):
     _ = np.random.seed(seed)
     _ = torch.manual_seed(seed)
-    _ = torch.cuda.manual_seed(seed)
+    if torch.cuda.is_available:
+        _ = torch.cuda.manual_seed(seed)

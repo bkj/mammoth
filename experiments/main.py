@@ -23,11 +23,13 @@ from torch.autograd import Variable
 from rsub import *
 from matplotlib import pyplot as plt
 
-sys.path.append('/home/bjohnson/projects/mammoth')
 from helpers import to_numpy, set_seeds
 from hyperlayer import HyperLayer
 
 set_seeds(123)
+torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.deterministic = True
+
 
 # --
 # IO
