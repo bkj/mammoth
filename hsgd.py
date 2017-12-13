@@ -42,14 +42,13 @@ class HSGD():
                 !! Untested
         """
         self.params = list(params)
-        self.cuda = self.params[0].is_cuda
         
-        self.lrs = lrs if not self.cuda else lrs.cuda()
-        self.mos = mos if not self.cuda else mos.cuda()
+        self.lrs = lrs
+        self.mos = mos
         
         self.has_mts = mts is not None
         if self.has_mts:
-            self.mts = mts if not self.coda else mts.cuda()
+            self.mts = mts
         
         self._numel   = sum([p.numel() for p in self.params])
         self._szs     = szs if szs is not None else [np.prod(p.size()) for p in self.params]
@@ -60,7 +59,7 @@ class HSGD():
         self.d_lrs = lrs.clone().zero_()
         self.d_mos = mos.clone().zero_()
         if self.has_mts:
-            self.d_mts = self.mts.clone().zero_()
+            self.d_mts = self.mts.data.clone().zero_()
         
         self.forward_ready = False
         self.backward_ready = False
@@ -111,8 +110,7 @@ class HSGD():
         #     views.append(view)
         
         # return torch.cat(views, 0)
-        tmp = torch.FloatTensor(to_numpy(vals).repeat(self._szs))
-        return tmp if not self.cuda else tmp.cuda()
+        return torch.FloatTensor(to_numpy(vals).repeat(self._szs)).cuda()
     
     def _get_flat_grads(self):
         views = []
@@ -188,3 +186,7 @@ class HSGD():
             self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
         
         self.d_v = self.d_v * mo
+        
+        if self.has_mts:
+            if self.mts.grad is not None:
+                _ = self.mts.grad.zero_()

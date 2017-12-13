@@ -15,28 +15,39 @@ from torch.nn import functional as F
 from torch.autograd import Variable
 
 from helpers import to_numpy
-from hsgd import HSGD
+# from hsgd import HSGD
 
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = True
 
 class HyperLayer(nn.Module):
-    def __init__(self, X, y, num_iters, batch_size, seed=0):
+    def __init__(self, X, y, num_iters, batch_size, seed=0, loss_function=F.cross_entropy):
         super(HyperLayer, self).__init__()
+        
+        assert type(X) == Variable, "HyperLayer.__init__: X is not a Variable"
+        assert type(y) == Variable, "HyperLayer.__init__: y is not a Variable"
+        assert X.is_cuda, "HyperLayer.__init__: not X.is_cuda"
+        assert y.is_cuda, "HyperLayer.__init__: not y.is_cuda"
         
         self.X = X
         self.y = y
         self.num_iters = num_iters
         self.batch_size = batch_size
         self.seed = seed
+        self.loss_function = loss_function
         
         self.register_backward_hook(HyperLayer._backward_hook)
     
-    def __call__(self, net, lrs, mos, val_data=None, szs=None, cheap=False):
+    def __call__(self, net, lrs, mos, params=None, mts=None, val_data=None, szs=None, cheap=False):
         self.net = net
         self.lrs = lrs
         self.mos = mos
-        self.opt = HSGD(params=net.parameters(), lrs=lrs.data, mos=mos.data, szs=szs)
+        self.mts = mts
+        self.params = params if params is not None else list(net.parameters())
+        
+        assert len(self.params) > 0, "HyperLayer.__call__: len(self.params) == 0"
+        
+        self.opt = HSGD(params=self.params, lrs=lrs.data, mos=mos.data, szs=szs, mts=mts)
         
         self.orig_weights = to_numpy(self.opt._get_flat_params())
         
@@ -49,8 +60,8 @@ class HyperLayer(nn.Module):
         self.net.load_state_dict(state)
         
         # Return dummy loss, so we can propagate errors
-        tmp = super(HyperLayer, self).__call__(self.lrs, self.mos)
-        return tmp.sum()
+        return super(HyperLayer, self).__call__(self.mts)
+        # return tmp.sum()
         
     def _deterministic_batch(self, X, y, batch_size, seed):
         idxs = np.random.RandomState(seed).randint(X.size(0), size=batch_size)
@@ -64,9 +75,10 @@ class HyperLayer(nn.Module):
         for sgd_iter in tqdm(range(num_iters)):
             Xb, yb = self._deterministic_batch(X, y, batch_size, seed=(self.seed, sgd_iter))
             
+            self.net.zero_grad()
             self.opt.zero_grad()
             scores = self.net(Xb)
-            loss = F.cross_entropy(scores, yb)
+            loss = self.loss_function(scores, yb)
             loss.backward()
             
             self.opt.step(sgd_iter) if isinstance(self.opt, HSGD) else self.opt.step()
@@ -82,28 +94,29 @@ class HyperLayer(nn.Module):
         
         preds = to_numpy(scores).argmax(1)
         act = to_numpy(y)
-        return (preds == act).mean()
+        # return (preds == act).mean()
+        return ((preds - act) ** 2).sum()
     
     def _untrain(self, X, y, num_iters, batch_size, cheap=False):
         self.opt.zero_grad()
         
-        try:
-            # Initialize backward -- method 1 (not scalable)
-            def lf_all():
-                return F.cross_entropy(self.net(X), y)
+        # try:
+        # Initialize backward -- method 1 (not scalable)
+        def lf_all():
+            return self.loss_function(self.net(X), y)
+        
+        self.opt.init_backward(lf_all)
+        # except:
+        #     # Initialize backward -- method 2 (scalable, less tested)
+        #     for chunk in np.array_split(np.arange(X.size(0)), 10):
+        #         chunk = torch.LongTensor(chunk).cuda()
+        #         loss = self.loss_function(self.net(X[chunk]), y[chunk], size_average=False)
+        #         loss.backward()
             
-            self.opt.init_backward(lf_all)
-        except:
-            # Initialize backward -- method 2 (scalable, less tested)
-            for chunk in np.array_split(np.arange(X.size(0)), 10):
-                chunk = torch.LongTensor(chunk).cuda()
-                loss = F.cross_entropy(self.net(X[chunk]), y[chunk], size_average=False)
-                loss.backward()
-            
-            g = self.opt._flatten([p.grad for p in self.opt.params]).data
-            g /= X.size(0)
-            self.opt.d_x = g
-            self.opt.g_data = self.opt.d_x.clone()
+        #     g = self.opt._flatten([p.grad for p in self.opt.params]).data
+        #     g /= X.size(0)
+        #     self.opt.d_x = g
+        #     self.opt.g_data = self.opt.d_x.clone()
         
         self.opt.backward_ready = True
         
@@ -112,7 +125,7 @@ class HyperLayer(nn.Module):
             Xb, yb = self._deterministic_batch(X, y, batch_size, seed=(self.seed, sgd_iter))
             
             def lf():
-                return F.cross_entropy(self.net(Xb), yb)
+                return self.loss_function(self.net(Xb), yb)
             
             self.opt.zero_grad()
             if cheap:
@@ -125,12 +138,14 @@ class HyperLayer(nn.Module):
         untrained_weights = to_numpy(self.opt._get_flat_params())
         assert np.all(self.orig_weights == untrained_weights), 'meta_iter: orig_weights != untrained_weights'
     
-    def forward(self, lrs, mos):
+    def forward(self, mts):
         """ hack to get _backward_hook to call w/ correct sized arguments """
-        return torch.cat([lrs, mos], dim=1)
+        # return lrs.sum() + mos.sum()
+        return mts.sum()
     
     @staticmethod
     def _backward_hook(self, grad_input, grad_output):
         """ pass gradients from hypersgd back to lrs/mos """
-        return Variable(self.opt.d_lrs), Variable(self.opt.d_mos)
+        # return Variable(self.opt.d_lrs), Variable(self.opt.d_mos)
+        return Variable(self.opt.d_mts),
 
