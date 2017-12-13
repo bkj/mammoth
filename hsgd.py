@@ -182,11 +182,14 @@ class HSGD():
         
         # (Maybe) update meta-parameters
         if self.has_mts:
-            lf_hvp_mts = (self._flatten(autograd.grad(lf(), self.mts, create_graph=True)) * d_vpar).sum()
+            g2 = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
+            d_vpar = Parameter(self.d_v, requires_grad=True)
+            lf_hvp_mts = (g2 * d_vpar).sum()
             self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
-        
+            
         self.d_v = self.d_v * mo
         
         if self.has_mts:
             if self.mts.grad is not None:
                 _ = self.mts.grad.zero_()
+

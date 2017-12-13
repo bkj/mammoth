@@ -15,7 +15,7 @@ from torch.nn import functional as F
 from torch.autograd import Variable
 
 from helpers import to_numpy
-# from hsgd import HSGD
+from hsgd import HSGD
 
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = True
@@ -35,19 +35,14 @@ class HyperLayer(nn.Module):
         self.batch_size = batch_size
         self.seed = seed
         self.loss_function = loss_function
-        
-        self.register_backward_hook(HyperLayer._backward_hook)
     
     def __call__(self, net, lrs, mos, params=None, mts=None, val_data=None, szs=None, cheap=False):
         self.net = net
-        self.lrs = lrs
-        self.mos = mos
-        self.mts = mts
-        self.params = params if params is not None else list(net.parameters())
         
-        assert len(self.params) > 0, "HyperLayer.__call__: len(self.params) == 0"
+        params = params if params is not None else list(net.parameters())
+        assert len(params) > 0, "HyperLayer.__call__: len(params) == 0"
         
-        self.opt = HSGD(params=self.params, lrs=lrs.data, mos=mos.data, szs=szs, mts=mts)
+        self.opt = HSGD(params=params, lrs=lrs.data, mos=mos.data, szs=szs, mts=mts)
         
         self.orig_weights = to_numpy(self.opt._get_flat_params())
         
@@ -59,9 +54,10 @@ class HyperLayer(nn.Module):
         self._untrain(self.X, self.y, self.num_iters, self.batch_size, cheap=cheap)
         self.net.load_state_dict(state)
         
-        # Return dummy loss, so we can propagate errors
-        return super(HyperLayer, self).__call__(self.mts)
-        # return tmp.sum()
+        lrs.backward(self.opt.d_lrs)
+        mos.backward(self.opt.d_mos)
+        if mts is not None:
+            mts.backward(self.opt.d_mts)
         
     def _deterministic_batch(self, X, y, batch_size, seed):
         idxs = np.random.RandomState(seed).randint(X.size(0), size=batch_size)
@@ -94,8 +90,8 @@ class HyperLayer(nn.Module):
         
         preds = to_numpy(scores).argmax(1)
         act = to_numpy(y)
-        # return (preds == act).mean()
-        return ((preds - act) ** 2).sum()
+        return (preds == act).mean()
+        # return ((preds - act) ** 2).sum()
     
     def _untrain(self, X, y, num_iters, batch_size, cheap=False):
         self.opt.zero_grad()
@@ -137,15 +133,3 @@ class HyperLayer(nn.Module):
         # Check that backward worked correctly
         untrained_weights = to_numpy(self.opt._get_flat_params())
         assert np.all(self.orig_weights == untrained_weights), 'meta_iter: orig_weights != untrained_weights'
-    
-    def forward(self, mts):
-        """ hack to get _backward_hook to call w/ correct sized arguments """
-        # return lrs.sum() + mos.sum()
-        return mts.sum()
-    
-    @staticmethod
-    def _backward_hook(self, grad_input, grad_output):
-        """ pass gradients from hypersgd back to lrs/mos """
-        # return Variable(self.opt.d_lrs), Variable(self.opt.d_mos)
-        return Variable(self.opt.d_mts),
-

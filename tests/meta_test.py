@@ -30,18 +30,19 @@ from torch.utils.data.sampler import SequentialSampler, RandomSampler, BatchSamp
 
 from collections import defaultdict
 from helpers import to_numpy, set_seeds
-# from hyperlayer import HyperLayer
+from hyperlayer import HyperLayer
 
 # --
 # Fake some data
 
+set_seeds(123)
 
 N = 10000
 X_train_ = Variable(torch.randn((N, 2)).cuda())
 y_train_ = Variable(torch.ones(N).cuda())
 
-X_test_ = Variable(torch.randn((N, 2)).cuda())
-y_test_ = Variable(torch.ones(N).cuda())
+X_test_ = X_train_.clone()
+y_test_ = y_train_.clone()
 
 # --
 # Define model
@@ -61,29 +62,30 @@ def make_net(mts):
 # --
 # Parameters
 
-hyper_lr = 0.1
-init_lr = 0.01
-init_mo = -0.1
-fix_data = True
+hyper_lr   = 0.05
+init_lr    = 0.5
+init_mo    = -1
+fix_data   = False
 meta_iters = 250
 
-num_iters = 200
-batch_size = 1000
+num_iters  = 100
+batch_size = 50
 
 # --
 # Parameterize learning rates + momentum
 
-n_groups = 2
+n_groups = 1
 
-mts = Variable(torch.FloatTensor([0.75]).cuda(), requires_grad=True)
+mts = Variable(torch.FloatTensor([0.0]).cuda(), requires_grad=True)
 lr_mean = Variable(torch.FloatTensor(np.full((1, n_groups), init_lr)).cuda(), requires_grad=True)
+lr_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda(), requires_grad=True)
 mo_mean = Variable(torch.FloatTensor(np.full((1, n_groups), init_mo)).cuda(), requires_grad=True)
+mo_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda(), requires_grad=True)
 
 # --
 # Hyper-optimizer
 
-hopt = torch.optim.Adam([mts], lr=hyper_lr) # learning rate, momentum and metaparameters
-# hopt = torch.optim.SGD([mts], lr=hyper_lr) # just metaparameters
+hopt = torch.optim.Adam([lr_mean, lr_res, mo_mean, mo_res, mts], lr=hyper_lr)
 
 # --
 # Run
@@ -93,12 +95,12 @@ hist = defaultdict(list)
 for meta_iter in range(0, meta_iters):
     print('meta_iter=%d' % meta_iter)
     
-    lrs = torch.clamp(lr_mean, 0.001, 10.0).expand((num_iters, n_groups))
-    mos = torch.clamp(1 - 10 ** (mo_mean), min=0, max=1).expand((num_iters, n_groups))
+    lrs = torch.clamp(lr_mean + lr_res, 0.001, 10.0)
+    mos = torch.clamp(1 - 10 ** (mo_mean + mo_res), min=0.001, max=1)
     
     # Do hyperstep
     hopt.zero_grad()
-    set_seeds(123)
+    # set_seeds(123)
     net = make_net(mts)
     
     params = list(net.parameters())
@@ -110,8 +112,7 @@ for meta_iter in range(0, meta_iters):
         seed=0 if fix_data else meta_iter,
         loss_function=F.mse_loss
     )
-    loss = h(net, lrs, mos, params=params, mts=mts, val_data=(X_test_, y_test_)) # !! This number is a meaningless hack to get gradients flowing
-    torch.autograd.backward(loss, [mts])
+    h(net, lrs, mos, params=params, mts=mts, val_data=(X_test_, y_test_)) # !! This number is a meaningless hack to get gradients flowing
     hopt.step()
     
     # Log
@@ -132,4 +133,9 @@ for meta_iter in range(0, meta_iters):
         _ = plt.plot(h)
     
     show_plot()
-    print(mts)
+    
+    _ = plt.plot(to_numpy(lrs).squeeze())
+    show_plot()
+    
+    print(mts.data[0])
+
