@@ -67,7 +67,7 @@ class HyperLayer(nn.Module):
             self.opt.zero_grad()
             scores = self.net(Xb)
             loss = F.cross_entropy(scores, yb)
-            loss.backward(create_graph=True) # !! Have to do this
+            loss.backward()
             
             self.opt.step(sgd_iter) if isinstance(self.opt, HSGD) else self.opt.step()
             
