@@ -72,6 +72,7 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
 hyper_lr = 0.01
 init_lr = 0.30
 init_mo = 0.50
+fix_init = True
 fix_data = False
 meta_iters = 25
 
@@ -105,6 +106,9 @@ for meta_iter in range(0, meta_iters):
     
     # Do hyperstep
     hopt.zero_grad()
+    if fix_init:
+        set_seeds(123)
+    
     net = make_net().cuda()
     h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=0 if fix_data else meta_iter)
     loss = h(net, lrs, mos, val_data=(X_val, y_val)) # !! This number is a meaningless hack to get gradients flowing
@@ -123,7 +127,3 @@ for meta_iter in range(0, meta_iters):
     hist['acc_hist'].append(h.acc_hist)
     hist['lrs'].append(to_numpy(lrs))
     hist['mos'].append(to_numpy(mos))
-
-
-# _ = plt.plot(hist['val_acc'])
-# show_plot()
