@@ -12,7 +12,6 @@ from tqdm import tqdm
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch.autograd import Variable
 
 from helpers import to_numpy
 from hsgd import HSGD
@@ -24,8 +23,6 @@ class HyperLayer(nn.Module):
     def __init__(self, X, y, num_iters, batch_size, seed=0, loss_function=F.cross_entropy):
         super(HyperLayer, self).__init__()
         
-        assert type(X) == Variable, "HyperLayer.__init__: X is not a Variable"
-        assert type(y) == Variable, "HyperLayer.__init__: y is not a Variable"
         assert X.is_cuda, "HyperLayer.__init__: not X.is_cuda"
         assert y.is_cuda, "HyperLayer.__init__: not y.is_cuda"
         
@@ -47,7 +44,7 @@ class HyperLayer(nn.Module):
         self.orig_weights = to_numpy(self.opt._get_flat_params())
         
         # Run hyperstep
-        self.loss_hist, self.acc_hist = self._train(self.X, self.y, self.num_iters, self.batch_size)
+        self.loss_hist, self.acc_hist = self._train(self.X, self.y, self.num_iters, self.batch_size, mts)
         self.val_acc = self._validate(*val_data) if val_data else None
         
         state = copy.deepcopy(self.net.state_dict())
@@ -64,7 +61,7 @@ class HyperLayer(nn.Module):
         idxs = torch.LongTensor(idxs).cuda()
         return X[idxs], y[idxs]
     
-    def _train(self, X, y, num_iters, batch_size):
+    def _train(self, X, y, num_iters, batch_size, mts):
         
         # Run forward
         loss_hist, acc_hist = [], []
@@ -74,7 +71,7 @@ class HyperLayer(nn.Module):
             self.net.zero_grad()
             self.opt.zero_grad()
             scores = self.net(Xb)
-            loss = self.loss_function(scores, yb)
+            loss = 1.0 * self.loss_function(scores, yb)
             loss.backward()
             
             self.opt.step(sgd_iter) if isinstance(self.opt, HSGD) else self.opt.step()
@@ -127,8 +124,8 @@ class HyperLayer(nn.Module):
                 self.opt.unstep_cheap(lf, sgd_iter, one_step=False)
             else:
                 self.opt.unstep(lf, sgd_iter)
-            
         
         # Check that backward worked correctly
         untrained_weights = to_numpy(self.opt._get_flat_params())
         assert np.all(self.orig_weights == untrained_weights), 'meta_iter: orig_weights != untrained_weights'
+

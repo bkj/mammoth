@@ -6,9 +6,6 @@
     Wrappers for torch tensors that allow for exact (reversible) +,-,*,/
     
     !! Could probably be made faster, eg by reducing GPU<->CPU and numpy<->torch trips
-    
-    !! TODO -- add support for both doubles and floats
-        - haven't tested w/ floats, but presumably works similarly
 """
 
 import sys
@@ -19,99 +16,15 @@ from helpers import to_numpy
 float_cast = lambda x: x.float()
 double_cast = lambda x: x.double()
 
-class ETensor_numpy(object):
-    RADIX_SCALE = long(2 ** 52)
-    def __init__(self, val):
-        
-        self.cuda = val.is_cuda
-        
-        if type(val) in [torch.cuda.FloatTensor, torch.FloatTensor]:
-            self._cast = float_cast
-        elif type(val) in [torch.cuda.DoubleTensor, torch.DoubleTensor]:
-            self._cast = double_cast
-        
-        self.intrep = self.float_to_intrep(val)
-        self.size = val.size()
-        
-        self.aux = self._make_aux(self.size)
-    
-    def _make_aux(self, size):
-        if len(size) > 1:
-            return np.array([[0L] * size[1]] * size[0], dtype=object)
-        else:
-            return np.array([0L] * size[0], dtype=object)
-    
-    def _push_pop(self, r, n, d):
-        assert torch.le(d, 2 ** 16).all(), 'ETensor._push_pop: M > 2 ** 16'
-        
-        d = to_numpy(d).astype(long)
-        r = to_numpy(r).astype(long)
-        n = to_numpy(n)
-        
-        self.aux *= d
-        self.aux += r
-        
-        res = self.aux % n
-        self.aux -= res
-        self.aux /= n
-        
-        return torch.LongTensor(res)
-    
-    def add(self, a):
-        self.intrep += self.float_to_intrep(a)
-        return self
-    
-    def sub(self, a):
-        self.add(-a)
-        return self
-    
-    def rational_mul(self, n, d):
-        r = self.intrep % d
-        res = self._push_pop(r, n, d)
-        if self.cuda:
-            res = res.cuda()
-        
-        self.intrep -= self.intrep % d
-        self.intrep /= d
-        self.intrep *= n
-        self.intrep += res
-        return self
-        
-    def mul(self, a):
-        n, d = self.float_to_rational(a)
-        self.rational_mul(n, d)
-        return self
-        
-    def unmul(self, a):
-        n, d = self.float_to_rational(a)
-        self.rational_mul(d, n)
-        return self
-        
-    def float_to_rational(self, a):
-        assert torch.gt(a, 0.0).all()
-        d = 2 ** 16 / torch.floor(a + 1).long()
-        n = torch.floor(a * self._cast(d) + 1).long()
-        return n, d
-        
-    def float_to_intrep(self, x):
-        intrep = (x * self.RADIX_SCALE).long()
-        if self.cuda:
-            intrep = intrep.cuda()
-        return intrep
-    
-    @property
-    def val(self):
-        return self._cast(self.intrep) / self.RADIX_SCALE
-
-
 class ETensor_torch(object):
-    RADIX_SCALE = long(2 ** 52)
+    RADIX_SCALE = int(2 ** 52)
     def __init__(self, val):
         self.cuda = val.is_cuda
-        if type(val) in [torch.cuda.FloatTensor, torch.FloatTensor]:
-            self._cast = float_cast
-        elif type(val) in [torch.cuda.DoubleTensor, torch.DoubleTensor]:
-            self._cast = double_cast
+        
+        # if type(val) in [torch.cuda.FloatTensor, torch.FloatTensor]:
+        self._cast = float_cast
+        # elif type(val) in [torch.cuda.DoubleTensor, torch.DoubleTensor]:
+            # self._cast = double_cast
         
         self.intrep = self.float_to_intrep(val)
         self.size = val.size()
@@ -181,7 +94,7 @@ class ETensor_torch(object):
     
     def float_to_rational(self, a):
         assert torch.gt(a, 0.0).all()
-        d = 2 ** 16 / torch.floor(a + 1).long()
+        d = (2 ** 16 / torch.floor(a + 1)).long()
         n = torch.floor(a * self._cast(d) + 1).long()
         return n, d
     

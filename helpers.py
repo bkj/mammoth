@@ -7,13 +7,19 @@
 import numpy as np
 
 import torch
-from torch.autograd import Variable
 
 def to_numpy(x):
-    if isinstance(x, Variable):
-        return to_numpy(x.data)
-    
-    return x.cpu().numpy() if x.is_cuda else x.numpy()
+    if type(x) in [list, tuple]:
+        return [to_numpy(xx) for xx in x]
+    elif type(x) in [np.ndarray, float, int]:
+        return x
+    elif x.requires_grad:
+        return to_numpy(x.detach())
+    else:
+        if x.is_cuda:
+            return x.cpu().numpy()
+        else:
+            return x.numpy()
 
 def set_seeds(seed):
     _ = np.random.seed(seed)

@@ -8,7 +8,6 @@ import numpy as np
 
 import torch
 from torch import autograd
-from torch.autograd import Variable
 from torch.nn import Parameter
 from torch.optim.optimizer import Optimizer
 
@@ -16,15 +15,8 @@ from helpers import to_numpy
 
 # --
 # Set backend
-# `torch` uses the GPU, so should be dramatically faster
 
-etensor_backend = 'torch'
-if etensor_backend == 'torch':
-    from exact_reps import ETensor_torch as ETensor
-elif etensor_backend == 'numpy':
-    from exact_reps import ETensor_numpy as ETensor
-else:
-    raise Exception('unknown etensor_backend=%s' % etensor_backend)
+from exact_reps import ETensor_torch as ETensor
 
 # --
 # "Flat" HSGD
@@ -72,11 +64,8 @@ class HSGD():
     def zero_grad(self):
         for p in self.params:
             if p.grad is not None:
-                if p.grad.volatile:
-                    p.grad.data.zero_()
-                else:
-                    data = p.grad.data
-                    p.grad = Variable(data.new().resize_as_(data).zero_())
+                data = p.grad.data
+                p.grad = data.new().resize_as_(data).zero_()
     
     def _get_flat_params(self):
         views = []
@@ -182,6 +171,7 @@ class HSGD():
         
         # (Maybe) update meta-parameters
         if self.has_mts:
+            print('has mts')
             g2 = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
             d_vpar = Parameter(self.d_v, requires_grad=True)
             lf_hvp_mts = (g2 * d_vpar).sum()

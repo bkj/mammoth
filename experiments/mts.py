@@ -85,16 +85,15 @@ meta_iters = 250
 
 n_groups = len(list(make_net().parameters()))
 
-lr_mean = torch.tensor(np.full((1, n_groups), init_lr)).cuda().requires_grad_()
-lr_res  = torch.tensor(np.full((num_iters, n_groups), 0.0)).cuda().requires_grad_()
-
-mo_mean = torch.tensor(np.full((1, n_groups), init_mo)).cuda().requires_grad_()
-mo_res  = torch.tensor(np.full((num_iters, n_groups), 0.0)).cuda().requires_grad_()
+szs = [sum([np.prod(p.size()) for p in make_net().parameters()])]
+lr_init = torch.tensor(np.full((1, 1), init_lr)).cuda().requires_grad_()
+lr_res  = torch.tensor(np.full((1, num_iters), 0.0)).cuda().requires_grad_()
+mo_init = torch.tensor(np.full((1, 1), init_mo)).cuda().requires_grad_()
 
 # --
 # Hyper-optimizer
 
-hopt = torch.optim.Adam([lr_mean, lr_res, mo_mean, mo_res], lr=hyper_lr)
+hopt = torch.optim.Adam([lr_init, mo_init], lr=hyper_lr)
 
 # --
 # Run
@@ -107,8 +106,9 @@ for meta_iter in range(0, meta_iters):
     # --
     # Transform hyperparameters
     
-    lrs = torch.clamp(lr_mean + lr_res, 0.001, 10.0)
-    mos = torch.clamp(mo_mean + mo_res, 0.001, 0.999)
+    # lin = Variable(torch.linspace(1, 0, num_iters).expand(1, num_iters).t()).cuda()
+    lrs = torch.clamp(lr_init, 0.001, 10.0) + lr_res.expand(1, num_iters).t()
+    mos = torch.clamp(mo_init, 0.001, 0.999).expand(num_iters, 1)
     
     # --
     # Hyperstep
@@ -118,8 +118,11 @@ for meta_iter in range(0, meta_iters):
         set_seeds(123)
     
     net = make_net().cuda()
-    h   = HyperLayer(X_train, y_train, num_iters, batch_size, seed=0 if fix_data else meta_iter)
-    h(net, lrs, mos, val_data=(X_val, y_val))
+    
+    # params = list(net.parameters())
+    
+    h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=0 if fix_data else meta_iter)
+    h(net, lrs, mos, val_data=(X_val, y_val), szs=szs)
     hopt.step()
     
     # --
@@ -136,13 +139,14 @@ for meta_iter in range(0, meta_iters):
         "tail_loss_mean" : float(h.loss_hist[-10:].mean()),
         "tail_acc_mean"  : float(h.acc_hist[-10:].mean()),
     }))
-
+    
+    for lr in to_numpy(lrs).T:
+        _ = plt.plot(lr)
+        
+    show_plot()
 
 _ = plt.plot([h[-1] for h in hist['acc_hist']])
 show_plot()
 
-for lr in to_numpy(lrs).T:
-    _ = plt.plot(lr)
 
-show_plot()
 
