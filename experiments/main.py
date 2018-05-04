@@ -34,8 +34,6 @@ torch.backends.cudnn.deterministic = True
 # --
 # IO
 
-batch_size = 200
-num_iters = 100
 
 X_train, y_train, X_val, y_val, _ = load_data(normalize=True)
 
@@ -69,12 +67,15 @@ def make_net(weight_scale=np.exp(-3), layers=[50, 50, 50]):
 # --
 # Parameters
 
+num_iters = 200
+batch_size = 200
+
 hyper_lr = 0.01
 init_lr = 0.30
 init_mo = 0.50
 fix_init = True
 fix_data = False
-meta_iters = 25
+meta_iters = 250
 
 # --
 # Parameterize learning rates + momentum
@@ -111,8 +112,7 @@ for meta_iter in range(0, meta_iters):
     
     net = make_net().cuda()
     h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=0 if fix_data else meta_iter)
-    loss = h(net, lrs, mos, val_data=(X_val, y_val)) # !! This number is a meaningless hack to get gradients flowing
-    loss.backward()
+    h(net, lrs, mos, val_data=(X_val, y_val))
     hopt.step()
     
     # Log
@@ -127,3 +127,14 @@ for meta_iter in range(0, meta_iters):
     hist['acc_hist'].append(h.acc_hist)
     hist['lrs'].append(to_numpy(lrs))
     hist['mos'].append(to_numpy(mos))
+
+
+
+_ = plt.plot([h[-1] for h in hist['acc_hist']])
+show_plot()
+
+for lr in to_numpy(lrs).T:
+    _ = plt.plot(lr)
+
+show_plot()
+

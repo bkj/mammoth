@@ -29,9 +29,6 @@ torch.backends.cudnn.deterministic = True
 # --
 # IO
 
-batch_size  = 128
-num_iters   = 468 * 4
-
 if not os.path.exists('.cnn_X_train'):
     from keras.datasets import mnist
     (X_train, y_train), (X_val, y_val) = mnist.load_data()
@@ -60,23 +57,24 @@ else:
     X_val = torch.load(open('.cnn_X_val'))
     y_val = torch.load(open('.cnn_y_val'))
 
+
 # --
 # Define network
 
 class Net(nn.Module):
     def __init__(self):
         super(Net, self).__init__()
-        self.conv1 = nn.Conv2d(3, 32, kernel_size=3)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3)
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3)
         # self.conv2_drop = nn.Dropout2d()
-        self.fc1   = nn.Linear(64 * 12 ** 2, 128)
+        self.fc1   = nn.Linear(32 * 12 ** 2, 128)
         self.fc2   = nn.Linear(128, 10)
         
     def forward(self, x):
         x = F.relu(self.conv1(x))
         x = F.relu(self.conv2(x))
         x = F.max_pool2d(x, 2)
-        x = x.view(-1, 64 * 12 ** 2)
+        x = x.view(-1, 32 * 12 ** 2)
         # x = F.dropout(x, p=0.25, training=self.training) # !! Supported?
         x = F.relu(self.fc1(x))
         # x = F.dropout(x, p=0.5, training=self.training) # !! Supported?
@@ -86,75 +84,62 @@ class Net(nn.Module):
 # --
 # Params
 
+batch_size  = 64
+num_iters   = 468 * 2
+
 hyper_lr = 0.01
 init_lr = 0.20
-init_mo = 0.50
-fix_data = False
+init_mo = -1
+fix_init = True
+fix_data = True
 meta_iters = 50
-
-_ = torch.manual_seed(123)
-_ = torch.cuda.manual_seed(123)
-
-n_groups = len(list(Net().parameters()))
 
 # --
 # Hypertraining
 
 n_groups = len(list(Net().cuda().parameters()))
 
-lr_max = Variable(torch.FloatTensor(np.full((1, n_groups), init_lr)).cuda(), requires_grad=True)
-mo = Variable(torch.FloatTensor(np.full((1, n_groups), init_mo)).cuda(), requires_grad=True)
-c = Variable(1 - torch.arange(0, num_iters).view(-1, 1) / num_iters).cuda()
+lr_mean = Variable(torch.FloatTensor(np.full((1, n_groups), init_lr)).cuda(), requires_grad=True)
+lr_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda(), requires_grad=True)
 
-hopt = torch.optim.Adam([lr_max, mo], lr=hyper_lr)
+mo_mean = Variable(torch.FloatTensor(np.full((1, n_groups), init_mo)).cuda(), requires_grad=True)
+mo_res  = Variable(torch.FloatTensor(np.full((num_iters, n_groups), 0.0)).cuda(), requires_grad=True)
 
+hopt = torch.optim.Adam([lr_mean, lr_res, mo_mean, mo_res], lr=hyper_lr)
+
+
+set_seeds(123)
 hist = defaultdict(list)
-
 for meta_iter in range(0, meta_iters):
-    try:
-        print 'meta_iter=%d' % meta_iter
-        print 'lr=', to_numpy(lr_max).squeeze()
-        print 'mo=', to_numpy(mo).squeeze()
-        
-        # Transform hyperparameters
-        lrs = torch.clamp(lr_max * c, 0, 999)
-        mos = torch.clamp(mo, 0.001, 0.999).repeat(num_iters, 1)
-        
-        # Do hyperstep
-        hopt.zero_grad()
-        net = Net().cuda()
-        h = HyperLayer(X_train, y_train, num_iters, batch_size, seed=meta_iter)
-        dummy_loss = h(net, lrs, mos, val_data=(X_val, y_val))
-        
-        # reg_loss = reg_strength * F.relu(lr_res[1:] - lr_res[:-1] - 0.01).sum()
-        
-        loss = dummy_loss# + reg_loss
-        loss.backward()
-        hopt.step()
-        
-        print 'print val_acc=%f | loss_hist.tail.mean=%f | acc_hist.tail.mean=%f | reg_loss=%f' % (
-            h.val_acc,
-            h.loss_hist[-10:].mean(),
-            h.acc_hist[-10:].mean(),
-            # to_numpy(reg_loss)[0],
-            0
-        )
-        
-        hist['val_acc'].append(h.val_acc)
-        hist['lrs'].append(to_numpy(lrs))
-        hist['mos'].append(to_numpy(mos))
-    except KeyboardInterrupt:
-        raise
-    except:
-        print "nonexact backward pass at meta_iter=%d -- skipping" % meta_iter
-
-
-
-for l in hist['lrs'][-1].T[::2]:
-    _ = plt.plot(l)
-
-show_plot()
-
-
-_ = plt.plot(np.hstack(hist['val_acc']))
-show_plot()
+    print 'meta_iter=%d' % meta_iter
+    
+    # Transform hyperparameters
+    lrs = torch.clamp(lr_mean + lr_res, 0.001, 10.0)
+    mos = torch.clamp(1 - 10 ** (mo_mean + mo_res), 0.001, 0.999)
+    
+    # Do hyperstep
+    hopt.zero_grad()
+    if fix_init:
+        set_seeds(123)
+    
+    net = Net().cuda()
+    params = list(net.parameters())
+    h = HyperLayer(
+        X_train,
+        y_train,
+        num_iters,
+        batch_size,
+        seed=0 if fix_data else meta_iter
+    )
+    h(net, lrs, mos, params=params, val_data=(X_val, y_val))
+    hopt.step()
+    
+    print 'print val_acc=%f | loss_hist.tail.mean=%f | acc_hist.tail.mean=%f' % (
+        h.val_acc,
+        h.loss_hist[-10:].mean(),
+        h.acc_hist[-10:].mean(),
+    )
+    
+    hist['val_acc'].append(h.val_acc)
+    hist['lrs'].append(to_numpy(lrs))
+    hist['mos'].append(to_numpy(mos))

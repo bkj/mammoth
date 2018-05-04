@@ -96,23 +96,22 @@ class HyperLayer(nn.Module):
     def _untrain(self, X, y, num_iters, batch_size, cheap=False):
         self.opt.zero_grad()
         
-        # try:
         # Initialize backward -- method 1 (not scalable)
-        def lf_all():
-            return self.loss_function(self.net(X), y)
+        # def lf_all():
+        #     return self.loss_function(self.net(X), y)
         
-        self.opt.init_backward(lf_all)
-        # except:
-        #     # Initialize backward -- method 2 (scalable, less tested)
-        #     for chunk in np.array_split(np.arange(X.size(0)), 10):
-        #         chunk = torch.LongTensor(chunk).cuda()
-        #         loss = self.loss_function(self.net(X[chunk]), y[chunk], size_average=False)
-        #         loss.backward()
-            
-        #     g = self.opt._flatten([p.grad for p in self.opt.params]).data
-        #     g /= X.size(0)
-        #     self.opt.d_x = g
-        #     self.opt.g_data = self.opt.d_x.clone()
+        # self.opt.init_backward(lf_all)
+        
+        # Initialize backward -- method 2 (scalable, less tested)
+        for chunk in np.array_split(np.arange(X.size(0)), 10):
+            chunk = torch.LongTensor(chunk).cuda()
+            loss = self.loss_function(self.net(X[chunk]), y[chunk], size_average=False)
+            loss.backward()
+        
+        g = self.opt._flatten([p.grad for p in self.opt.params]).data
+        g /= X.size(0)
+        self.opt.d_x = g
+        self.opt.g_data = self.opt.d_x.clone()
         
         self.opt.backward_ready = True
         

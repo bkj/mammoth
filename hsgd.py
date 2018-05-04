@@ -185,7 +185,8 @@ class HSGD():
             g2 = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
             d_vpar = Parameter(self.d_v, requires_grad=True)
             lf_hvp_mts = (g2 * d_vpar).sum()
-            self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
+            # self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data # ----------------------------
+            self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data.unsqueeze(-1) #-------------------------
             
         self.d_v = self.d_v * mo
         
