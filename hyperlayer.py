@@ -20,7 +20,7 @@ torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = True
 
 class HyperLayer(nn.Module):
-    def __init__(self, X, y, num_iters, batch_size, seed=0, loss_function=F.cross_entropy):
+    def __init__(self, X, y, num_iters, batch_size, seed=0, loss_function=F.cross_entropy, verbose=True):
         super(HyperLayer, self).__init__()
         
         assert X.is_cuda, "HyperLayer.__init__: not X.is_cuda"
@@ -32,8 +32,9 @@ class HyperLayer(nn.Module):
         self.batch_size = batch_size
         self.seed = seed
         self.loss_function = loss_function
+        self.verbose = verbose
     
-    def __call__(self, net, lrs, mos, params=None, mts=None, val_data=None, szs=None, cheap=False):
+    def __call__(self, net, lrs, mos, params=None, mts=None, val_data=None, test_data=None, szs=None, cheap=False, untrain=False):
         self.net = net
         
         params = params if params is not None else list(net.parameters())
@@ -45,16 +46,23 @@ class HyperLayer(nn.Module):
         
         # Run hyperstep
         self.loss_hist, self.acc_hist = self._train(self.X, self.y, self.num_iters, self.batch_size, mts)
-        self.val_acc = self._validate(*val_data) if val_data else None
+        
+        self.val_acc  = self._validate(*val_data) if val_data else None
+        self.test_acc = self._validate(*test_data) if test_data else None
         
         state = copy.deepcopy(self.net.state_dict())
-        self._untrain(self.X, self.y, self.num_iters, self.batch_size, cheap=cheap)
-        self.net.load_state_dict(state)
+        self._untrain(self.X, self.y, val_data[0], val_data[1], self.num_iters, self.batch_size, cheap=cheap, mts=mts)
+        
+        if not untrain:
+            self.net.load_state_dict(state)
         
         lrs.backward(self.opt.d_lrs)
         mos.backward(self.opt.d_mos)
         if mts is not None:
             mts.backward(self.opt.d_mts)
+        
+        for p,r in zip(params, self.opt.round_dx):
+            p.backward(r)
         
     def _deterministic_batch(self, X, y, batch_size, seed):
         idxs = np.random.RandomState(seed).randint(X.size(0), size=batch_size)
@@ -65,13 +73,17 @@ class HyperLayer(nn.Module):
         
         # Run forward
         loss_hist, acc_hist = [], []
-        for sgd_iter in tqdm(range(num_iters)):
+        gen = range(num_iters)
+        if self.verbose:
+            gen = tqdm(gen)
+        
+        for sgd_iter in gen:
             Xb, yb = self._deterministic_batch(X, y, batch_size, seed=(self.seed, sgd_iter))
             
             self.net.zero_grad()
             self.opt.zero_grad()
             scores = self.net(Xb)
-            loss = 1.0 * self.loss_function(scores, yb)
+            loss = self.loss_function(scores, yb)
             loss.backward()
             
             self.opt.step(sgd_iter) if isinstance(self.opt, HSGD) else self.opt.step()
@@ -90,7 +102,7 @@ class HyperLayer(nn.Module):
         return (preds == act).mean()
         # return ((preds - act) ** 2).sum()
     
-    def _untrain(self, X, y, num_iters, batch_size, cheap=False):
+    def _untrain(self, X, y, X_val, y_val, num_iters, batch_size, mts=None, cheap=False):
         self.opt.zero_grad()
         
         # Initialize backward -- method 1 (not scalable)
@@ -100,9 +112,9 @@ class HyperLayer(nn.Module):
         # self.opt.init_backward(lf_all)
         
         # Initialize backward -- method 2 (scalable, less tested)
-        for chunk in np.array_split(np.arange(X.size(0)), 10):
+        for chunk in np.array_split(np.arange(X_val.size(0)), 10):
             chunk = torch.LongTensor(chunk).cuda()
-            loss = self.loss_function(self.net(X[chunk]), y[chunk], size_average=False)
+            loss = self.loss_function(self.net(X_val[chunk]), y_val[chunk], size_average=False)
             loss.backward()
         
         g = self.opt._flatten([p.grad for p in self.opt.params]).data
@@ -113,7 +125,10 @@ class HyperLayer(nn.Module):
         self.opt.backward_ready = True
         
         # Run backward
-        for sgd_iter in tqdm(range(num_iters)[::-1]):
+        gen = range(num_iters)[::-1]
+        if self.verbose:
+            gen = tqdm(gen)
+        for sgd_iter in gen:
             Xb, yb = self._deterministic_batch(X, y, batch_size, seed=(self.seed, sgd_iter))
             
             def lf():
@@ -121,7 +136,8 @@ class HyperLayer(nn.Module):
             
             self.opt.zero_grad()
             if cheap:
-                self.opt.unstep_cheap(lf, sgd_iter, one_step=False)
+                raise Exception
+                # self.opt.unstep_cheap(lf, sgd_iter, one_step=False)
             else:
                 self.opt.unstep(lf, sgd_iter)
         

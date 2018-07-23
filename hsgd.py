@@ -43,6 +43,7 @@ class HSGD():
             self.mts = mts
         
         self._numel   = sum([p.numel() for p in self.params])
+        self._shapes  = [p.shape for p in self.params]
         self._szs     = szs if szs is not None else [np.prod(p.size()) for p in self.params]
         self._offsets = [0] + list(np.cumsum(self._szs))[:-1]
         
@@ -120,6 +121,18 @@ class HSGD():
         # !! This doesn't support sparse layers
         return torch.cat([xx.contiguous().view(-1) for xx in x])
     
+    @property
+    def round_dx(self):
+        offset = 0
+        out = []
+        for shape in self._shapes:
+            numel = np.prod(shape)
+            tmp = self.d_x[offset:(offset+numel)]
+            tmp = tmp.view(shape)
+            out.append(tmp)
+        
+        return out
+    
     def step(self, sgd_iter):
         lr = self._fill_parser(self.lrs[sgd_iter])
         mo = self._fill_parser(self.mos[sgd_iter])
@@ -171,12 +184,11 @@ class HSGD():
         
         # (Maybe) update meta-parameters
         if self.has_mts:
-            print('has mts')
             g2 = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
             d_vpar = Parameter(self.d_v, requires_grad=True)
-            lf_hvp_mts = (g2 * d_vpar).sum()
-            # self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data # ----------------------------
-            self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data.unsqueeze(-1) #-------------------------
+            lf_hvp_mts = (g2 * d_vpar).sum(dim=0, keepdim=True)
+            
+            self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
             
         self.d_v = self.d_v * mo
         
