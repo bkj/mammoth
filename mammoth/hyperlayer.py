@@ -13,8 +13,8 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from helpers import to_numpy
-from hsgd import HSGD
+from .helpers import to_numpy
+from .hsgd import HSGD
 
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = True

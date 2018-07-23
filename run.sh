@@ -2,4 +2,5 @@
 
 # run.sh
 
-python experiments/main.py
+mkdir results
+python experiments/mnist-mlp.py | tee results/mnist-mlp.py

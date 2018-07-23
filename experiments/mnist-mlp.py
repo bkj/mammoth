@@ -7,8 +7,6 @@
     on a toy MNIST network
 """
 
-from __future__ import print_function
-
 import sys
 import json
 import numpy as np
@@ -17,33 +15,30 @@ from collections import defaultdict
 import torch
 from torch import nn
 from torch.nn import functional as F
-from torch.autograd import Variable
 
 from rsub import *
 from matplotlib import pyplot as plt
 
-sys.path.append('/home/bjohnson/software/hypergrad')
-from hypergrad.data import load_data
-# ^^ Should remove this dependency at some point, but whatever for now
+sys.path.append('../mammoth')
+from mammoth.utils import load_data
+from mammoth.helpers import to_numpy, set_seeds
+from mammoth.hyperlayer import HyperLayer
 
-sys.path.append('.')
-from helpers import to_numpy, set_seeds
-from hyperlayer import HyperLayer
-
-set_seeds(123)
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = True
 
 # --
 # IO
 
+set_seeds(123)
+
 X_train, y_train, X_val, y_val, _ = load_data(normalize=True)
 
 X_train = torch.FloatTensor(X_train).cuda()
-y_train = torch.LongTensor(y_train).argmax(dim=-1).cuda()
+X_val   = torch.FloatTensor(X_val).cuda()
 
-X_val = torch.FloatTensor(X_val).cuda()
-y_val = torch.LongTensor(y_val).argmax(dim=-1).cuda()
+y_train = torch.LongTensor(y_train).argmax(dim=-1).cuda()
+y_val   = torch.LongTensor(y_val).argmax(dim=-1).cuda()
 
 
 # --
@@ -136,6 +131,7 @@ for meta_iter in range(0, meta_iters):
         "tail_loss_mean" : float(h.loss_hist[-10:].mean()),
         "tail_acc_mean"  : float(h.acc_hist[-10:].mean()),
     }))
+    sys.stdout.flush()
 
 
 _ = plt.plot([h[-1] for h in hist['acc_hist']])

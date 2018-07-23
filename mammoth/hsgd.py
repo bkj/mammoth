@@ -11,12 +11,8 @@ from torch import autograd
 from torch.nn import Parameter
 from torch.optim.optimizer import Optimizer
 
-from helpers import to_numpy
-
-# --
-# Set backend
-
-from exact_reps import ETensor_torch as ETensor
+from .helpers import to_numpy
+from .exact_reps import ETensor_torch as ETensor
 
 # --
 # "Flat" HSGD

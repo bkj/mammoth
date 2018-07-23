@@ -4,6 +4,7 @@
     helpers.py
 """
 
+import random
 import numpy as np
 
 import torch
@@ -21,8 +22,8 @@ def to_numpy(x):
         else:
             return x.numpy()
 
-def set_seeds(seed):
+def set_seeds(seed=100):
     _ = np.random.seed(seed)
-    _ = torch.manual_seed(seed)
-    if torch.cuda.is_available:
-        _ = torch.cuda.manual_seed(seed)
+    _ = torch.manual_seed(seed + 123)
+    _ = torch.cuda.manual_seed(seed + 456)
+    _ = random.seed(seed + 789)
