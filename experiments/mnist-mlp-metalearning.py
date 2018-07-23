@@ -69,7 +69,6 @@ class Net(nn.Module):
 num_iters  = 200
 batch_size = 200
 
-seed       = 345
 hyper_lr   = 0.01
 init_lr    = 0.30
 init_mo    = 0.50
@@ -94,9 +93,11 @@ mo_res  = torch.tensor(np.full((num_iters, n_groups), 0.0)).cuda().requires_grad
 # --
 # Run
 
-set_seeds(seed)
+set_seeds(123)
 
-hparams = [lr_mean, lr_res, mo_mean, mo_res]
+net = Net().cuda()
+
+hparams = list(net.parameters()) + [lr_mean, lr_res, mo_mean, mo_res]
 hopt = torch.optim.Adam(
     params=hparams, 
     lr=hyper_lr
@@ -113,11 +114,6 @@ for meta_iter in range(0, meta_iters):
     
     # --
     # Hyperstep
-    
-    if fix_init:
-        set_seeds(seed)
-    
-    net = Net().cuda()
     
     _ = hopt.zero_grad()
     hlayer = HyperLayer(
@@ -137,6 +133,8 @@ for meta_iter in range(0, meta_iters):
         lrs=lrs,
         mos=mos,
         mts=None,
+        untrain=True,
+        update_weights=True,
     )
     _ = hopt.step()
     
