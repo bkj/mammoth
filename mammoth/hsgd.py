@@ -122,15 +122,12 @@ class HSGD():
         tmp = self.d_v * self.eV.val
         self.d['mos'][sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
         
-        # Update auxilliary parameters
-        lf_hvp_x = torch.dot(g, self.d_v)
-        self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
-        
-        # (Maybe) update meta-parameters
+        # Update auxilliary parameters and (maybe) meta-parameters
+        g *= self.d_v
+        g = g.sum(dim=0, keepdim=True)
+        self.d_x -= self._flatten(autograd.grad(g.sum(), self.params, retain_graph=True)).data
         if self.meta is not None:
-            g2 = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
-            lf_hvp_meta = (g2 * self.d_v).sum(dim=0, keepdim=True)
-            self.d['meta'] -= self._flatten(autograd.grad(lf_hvp_meta, self.meta)).data
+            self.d['meta'] -= self._flatten(autograd.grad(g, self.meta)).data
             
         self.d_v = self.d_v * mo
     
