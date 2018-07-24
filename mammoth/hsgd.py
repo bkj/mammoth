@@ -14,41 +14,35 @@ from torch.optim.optimizer import Optimizer
 from .helpers import to_numpy
 from .exact_reps import ETensor_torch as ETensor
 
-# --
-# "Flat" HSGD
-#
-# Flattens parameter vector, which has it's tradeoffs
-# This is the preferred method for now
-
 class HSGD():
-    def __init__(self, params, lrs, mos, mts=None, szs=None):
+    def __init__(self, params, hparams, szs=None):
         """
-            params: parameters to optimizer
-            lrs: tensor of learning rates (default shape: needs to be (number of epochs x number of layers))
-            mos: tensor of momentums (default shape: same as lrs)
-            mts: tensor of meta parameters (have to have gradient w.r.t loss -- eg, have to be inside network)
-                !! Untested
+            params:  parameters to optimize
+            hparams: hyperparamters to optimize
         """
+        
+        assert 'lrs' in hparams, 'lrs' not in hparams
+        assert 'mos' in hparams, 'mos' not in hparams
+        
         self.params = list(params)
         
-        self.lrs = lrs
-        self.mos = mos
+        # hparams
+        self.lrs  = hparams.get('lrs', None)
+        self.mos  = hparams.get('mos', None)
+        self.meta = hparams.get('meta', None)
         
-        self.has_mts = mts is not None
-        if self.has_mts:
-            self.mts = mts
+        # hparam derivatives
+        self.d = {}
+        for k,v in hparams.items():
+            self.d[k] = v.data.clone().zero_()
+        
+        self.d_v = self._get_flat_params().data.clone().zero_()
+        self.d_g = self._get_flat_params().data.clone().zero_()
         
         self._numel   = sum([p.numel() for p in self.params])
         self._shapes  = [p.shape for p in self.params]
         self._szs     = szs if szs is not None else [np.prod(p.size()) for p in self.params]
         self._offsets = [0] + list(np.cumsum(self._szs))[:-1]
-        
-        self.d_v   = self._get_flat_params().data.clone().zero_()
-        self.d_g   = self._get_flat_params().data.clone().zero_()
-        self.d_lrs = lrs.clone().zero_()
-        self.d_mos = mos.clone().zero_()
-        if self.has_mts:
-            self.d_mts = self.mts.data.clone().zero_()
         
         self.forward_ready = False
         self.backward_ready = False
@@ -65,16 +59,7 @@ class HSGD():
                 p.grad = data.new().resize_as_(data).zero_()
     
     def _get_flat_params(self):
-        views = []
-        for p in self.params:
-            if p.data.is_sparse:
-                # view = p.to_dense().view(-1)
-                raise NotImplemented
-            else:
-                view = p.contiguous().view(-1)
-            views.append(view)
-        
-        return torch.cat(views, 0)
+        return torch.cat([p.contiguous().view(-1) for p in self.params], dim=0)
     
     def _set_flat_params(self, val):
         offset = 0
@@ -90,13 +75,10 @@ class HSGD():
             '\n\nFlatHSGD._fill_parser: len(vals) != len(self._szs):\n'
             '\t`lrs` or `mos` might be wrong dimension'
         )
-        # views = []
-        # for i, s in enumerate(self._szs):
-        #     view = vals.index(i).repeat(s)
-        #     views.append(view)
-        
-        # return torch.cat(views, 0)
-        return torch.FloatTensor(to_numpy(vals).repeat(self._szs)).cuda()
+        tmp = torch.cat([v.expand(int(s)) for v,s in zip(vals, self._szs)], dim=0).float()
+        old = torch.FloatTensor(to_numpy(vals).repeat(self._szs)).cuda()
+        assert (tmp == old).all()
+        return old
     
     def _get_flat_grads(self):
         views = []
@@ -111,7 +93,7 @@ class HSGD():
                 view = p.grad.data.view(-1)
             views.append(view)
         
-        return torch.cat(views, 0)
+        return torch.cat(views, dim=0)
     
     def _flatten(self, x):
         # !! This doesn't support sparse layers
@@ -123,8 +105,7 @@ class HSGD():
         out = []
         for shape in self._shapes:
             numel = np.prod(shape)
-            tmp = self.d_x[offset:(offset+numel)]
-            tmp = tmp.view(shape)
+            tmp = self.d_x[offset:(offset+numel)].view(shape)
             out.append(tmp)
         
         return out
@@ -134,7 +115,7 @@ class HSGD():
         mo = self._fill_parser(self.mos[sgd_iter])
         
         flat_params = self._get_flat_params()
-        flat_grad = self._get_flat_grads()
+        flat_grad   = self._get_flat_grads()
         
         if not self.forward_ready:
             self.eX = ETensor(flat_params.data.clone())
@@ -159,7 +140,7 @@ class HSGD():
         
         # Update learning rate
         for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-            self.d_lrs[sgd_iter,j] = torch.dot(self.d_x[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
+            self.d['lrs'][sgd_iter,j] = torch.dot(self.d_x[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
         
         # Reverse SGD exactly
         _ = self.eX.sub(lr * self.eV.val)
@@ -171,7 +152,7 @@ class HSGD():
         # Update mo
         self.d_v += self.d_x * lr
         for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-            self.d_mos[sgd_iter,j] = torch.dot(self.d_v[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
+            self.d['mos'][sgd_iter,j] = torch.dot(self.d_v[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
         
         # Update auxilliary parameters
         d_vpar   = Parameter(self.d_v, requires_grad=True)
@@ -179,16 +160,15 @@ class HSGD():
         self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
         
         # (Maybe) update meta-parameters
-        if self.has_mts:
+        if self.meta is not None:
             g2 = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
             d_vpar = Parameter(self.d_v, requires_grad=True)
-            lf_hvp_mts = (g2 * d_vpar).sum(dim=0, keepdim=True)
+            lf_hvp_meta = (g2 * d_vpar).sum(dim=0, keepdim=True)
             
-            self.d_mts -= self._flatten(autograd.grad(lf_hvp_mts, self.mts)).data
+            self.d['meta'] -= self._flatten(autograd.grad(lf_hvp_meta, self.meta)).data
+            
+            if self.meta.grad is not None:
+                _ = self.meta.grad.zero_()
             
         self.d_v = self.d_v * mo
-        
-        if self.has_mts:
-            if self.mts.grad is not None:
-                _ = self.mts.grad.zero_()
 

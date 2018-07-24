@@ -42,9 +42,8 @@ class HyperLayer(nn.Module):
         self.loss_fn    = loss_fn
         self.verbose    = verbose
     
-    def run(self, lrs, mos, 
-        X_train, y_train, X_valid, y_valid, X_test=None, y_test=None,
-        params=None, mts=None, szs=None, update_weights=False, untrain=False, check_perfect=True):
+    def run(self, hparams, X_train, y_train, X_valid, y_valid, X_test=None, y_test=None,
+        params=None, szs=None, update_weights=False, untrain=False, check_perfect=True):
         """
             update_weights : backprop into the initialization
             untrain:       : resulting weights are the same as initial weights
@@ -57,7 +56,7 @@ class HyperLayer(nn.Module):
         params = params if params is not None else list(self.net.parameters())
         assert len(params) > 0, "HyperLayer.run: len(params) == 0"
         
-        self.opt = HSGD(params=params, lrs=lrs.data, mos=mos.data, szs=szs, mts=mts)
+        self.opt = HSGD(params=params, hparams=hparams, szs=szs)
         
         if check_perfect:
             orig_weights = self.opt._get_flat_params()
@@ -68,7 +67,6 @@ class HyperLayer(nn.Module):
             y_train=y_train,
             num_iters=self.num_iters,
             batch_size=self.batch_size,
-            mts=mts,
         )
         
         # Compute performance
@@ -90,7 +88,6 @@ class HyperLayer(nn.Module):
             y_valid=y_valid, 
             num_iters=self.num_iters,
             batch_size=self.batch_size,
-            mts=mts,
         )
         
         if check_perfect:
@@ -101,10 +98,8 @@ class HyperLayer(nn.Module):
             self.net.load_state_dict(state)
         
         # Update LR, MO, MTS
-        lrs.backward(self.opt.d_lrs)
-        mos.backward(self.opt.d_mos)
-        if mts is not None:
-            mts.backward(self.opt.d_mts)
+        for hkey,grad in self.opt.d.items():
+            hparams[hkey].backward(grad)
         
         # Update model parameters
         if update_weights:
@@ -113,7 +108,7 @@ class HyperLayer(nn.Module):
         
         return train_hist, val_acc, test_acc
     
-    def _train(self, X_train, y_train, num_iters, batch_size, mts):
+    def _train(self, X_train, y_train, num_iters, batch_size):
         
         # Run forward
         hist = []
@@ -146,7 +141,7 @@ class HyperLayer(nn.Module):
         acc = (preds == y).float().mean()
         return float(acc)
     
-    def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size, mts=None):
+    def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size):
         _ = self.opt.zero_grad()
         
         # Initialize backward -- method 1 (not scalable)

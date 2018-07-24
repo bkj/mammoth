@@ -28,9 +28,10 @@ from torch.autograd import Variable
 from torch.nn import functional as F
 from torch.utils.data.sampler import SequentialSampler, RandomSampler, BatchSampler
 
-from collections import defaultdict
-from helpers import to_numpy, set_seeds
-from hyperlayer import HyperLayer
+sys.path.append('../mammoth')
+from mammoth.utils import load_data
+from mammoth.helpers import to_numpy, set_seeds
+from mammoth.hyperlayer import HyperLayer
 
 # --
 # Fake some data
