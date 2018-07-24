@@ -152,7 +152,6 @@ class HyperLayer(nn.Module):
         
         for sgd_iter in gen:
             X_train_batch, y_train_batch = deterministic_batch(X_train, y_train, batch_size, seed=(self.seed, sgd_iter))
-            
             lf = lambda: self.loss_fn(self.net(X_train_batch), y_train_batch)
             _ = self.opt.zero_grad()
-            self.opt.unstep(lf, sgd_iter)
+            _ = self.opt.unstep(lf, sgd_iter)

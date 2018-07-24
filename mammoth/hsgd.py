@@ -57,7 +57,7 @@ class HSGD():
                 p.grad.zero_()
     
     def _flatten(self, x):
-        return torch.cat([xx.contiguous().view(-1) for xx in x])
+        return torch.cat([xx.contiguous().view(-1) for xx in x], dim=0)
     
     def _get_flat_params(self):
         return torch.cat([p.contiguous().view(-1) for p in self.params], dim=0)
@@ -92,7 +92,7 @@ class HSGD():
         
         _ = self.eV.mul(mo).sub(flat_grad)
         _ = self.eX.add(lr * self.eV.val)
-        self._set_flat_params(self.eX.val)
+        _ = self._set_flat_params(self.eX.val)
     
     def init_backward(self, lf):
         assert self.forward_ready, 'cannot init_backward before calling HSGD.step'
@@ -112,7 +112,7 @@ class HSGD():
         
         # Reverse SGD exactly
         _ = self.eX.sub(lr * self.eV.val)
-        self._set_flat_params(self.eX.val)
+        _ = self._set_flat_params(self.eX.val)
         g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
         self.g_data = g.data
         _ = self.eV.add(g.data).unmul(mo)
