@@ -14,17 +14,13 @@ import numpy as np
 from .helpers import to_numpy
 
 float_cast = lambda x: x.float()
-double_cast = lambda x: x.double()
+# double_cast = lambda x: x.double()
 
-class ETensor_torch(object):
+class _ETensor_torch(object):
     RADIX_SCALE = int(2 ** 52)
     def __init__(self, val):
         self.cuda = val.is_cuda
-        
-        # if type(val) in [torch.cuda.FloatTensor, torch.FloatTensor]:
         self._cast = float_cast
-        # elif type(val) in [torch.cuda.DoubleTensor, torch.DoubleTensor]:
-            # self._cast = double_cast
         
         self.intrep = self.float_to_intrep(val)
         self.size = val.size()
@@ -64,7 +60,28 @@ class ETensor_torch(object):
         self.intrep /= d
         self.intrep *= n
         self.intrep += resid
-        
+    
+    def float_to_rational(self, a):
+        assert torch.gt(a, 0.0).all()
+        d = (2 ** 16 / torch.floor(a + 1)).long()
+        n = torch.floor(a * self._cast(d) + 1).long()
+        return n, d
+    
+    def float_to_intrep(self, x):
+        intrep = (x * self.RADIX_SCALE).long()
+        if self.cuda:
+            intrep = intrep.cuda()
+        return intrep
+    
+    @property
+    def val(self):
+        return self._cast(self.intrep) / self.RADIX_SCALE
+
+
+class ETensor_torch(_ETensor_torch):
+    """
+        Original implementation -- not optimally space efficient
+    """
     def mul(self, a):
         n, d = self.float_to_rational(a)
         self.rational_mul(n, d)
@@ -91,52 +108,36 @@ class ETensor_torch(object):
         self.rational_mul(d, n)
         
         return self
-    
-    def float_to_rational(self, a):
-        assert torch.gt(a, 0.0).all()
-        d = (2 ** 16 / torch.floor(a + 1)).long()
-        n = torch.floor(a * self._cast(d) + 1).long()
-        return n, d
-    
-    def float_to_intrep(self, x):
-        intrep = (x * self.RADIX_SCALE).long()
-        if self.cuda:
-            intrep = intrep.cuda()
-        return intrep
-    
-    @property
-    def val(self):
-        return self._cast(self.intrep) / self.RADIX_SCALE
 
 
-class ETensor_torch_alt1(ETensor_torch):
-    """ 
-        Alternate implementation that's more space efficient.
-        Little more complicated, though so let's punt for now.
-    """
-    def mul(self, a):
-        n, d = self.float_to_rational(a)
-        self.rational_mul(n, d)
+# class ETensor_torch(_ETensor_torch):
+#     """ 
+#         Alternate implementation that's more space efficient.
+#         Little more complicated, though so let's punt for now.
+#     """
+#     def mul(self, a):
+#         n, d = self.float_to_rational(a)
+#         self.rational_mul(n, d)
         
-        self.counter += 1
-        # If true, then could overflow on next iteration
-        if self.aux.max() > 2 ** (63 - 16):
-            mask = self.aux > 2 ** (63 - 16)
-            self.aux_buffer.append((mask, self.aux.masked_select(mask)))
-            self.aux.masked_fill_(mask, 0)
-            self.aux_pushed_at.append(self.counter)
+#         self.counter += 1
+#         # If true, then could overflow on next iteration
+#         if self.aux.max() > 2 ** (63 - 16):
+#             mask = self.aux > 2 ** (63 - 16)
+#             self.aux_buffer.append((mask, self.aux.masked_select(mask)))
+#             self.aux.masked_fill_(mask, 0)
+#             self.aux_pushed_at.append(self.counter)
         
-        return self
+#         return self
     
-    def unmul(self, a):
-        if self.counter == self.aux_pushed_at[-1]:
-            mask, old_entries = self.aux_buffer.pop()
-            self.aux.masked_scatter_(mask, old_entries)
-            _ = self.aux_pushed_at.pop()
+#     def unmul(self, a):
+#         if self.counter == self.aux_pushed_at[-1]:
+#             mask, old_entries = self.aux_buffer.pop()
+#             self.aux.masked_scatter_(mask, old_entries)
+#             _ = self.aux_pushed_at.pop()
         
-        self.counter -= 1
+#         self.counter -= 1
         
-        n, d = self.float_to_rational(a)
-        self.rational_mul(d, n)
+#         n, d = self.float_to_rational(a)
+#         self.rational_mul(d, n)
         
-        return self
+#         return self

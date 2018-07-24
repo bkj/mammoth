@@ -13,50 +13,41 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from .helpers import to_numpy
+from .helpers import to_numpy, deterministic_batch
 from .hsgd import HSGD
 
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = True
 
 # --
-# Helpers
-
-def deterministic_batch(X, y, batch_size, seed):
-    idxs = np.random.RandomState(seed).randint(X.size(0), size=batch_size)
-    idxs = torch.LongTensor(idxs).cuda()
-    return X[idxs], y[idxs]
-
-# --
 # Hyperlayer
 
 class HyperLayer(nn.Module):
-    def __init__(self,net, 
+    def __init__(self, net, params, hparams, 
         num_iters=32, batch_size=32, seed=0, loss_fn=F.cross_entropy, verbose=True):
-    
+        
         super().__init__()
+        
         self.net        = net
+        self.params     = list(params)
+        self.hparams    = hparams
         self.num_iters  = num_iters
         self.batch_size = batch_size
         self.seed       = seed
         self.loss_fn    = loss_fn
         self.verbose    = verbose
+        
+        assert len(self.params) > 0, "HyperLayer.__init__: len(params) == 0"
     
-    def run(self, hparams, X_train, y_train, X_valid, y_valid, X_test=None, y_test=None,
-        params=None, szs=None, update_weights=False, untrain=False, check_perfect=True):
+    def run(self, X_train, y_train, X_valid, y_valid, X_test=None, y_test=None,
+        szs=None, update_weights=False, untrain=False, check_perfect=True):
         """
             update_weights : backprop into the initialization
             untrain:       : resulting weights are the same as initial weights
             check_perfect  : make sure weights after untraining are _exactly_ the initial weights
         """
         
-        assert X_train.is_cuda and X_valid.is_cuda, "HyperLayer.__init__: not X.is_cuda"
-        assert y_train.is_cuda and y_valid.is_cuda, "HyperLayer.__init__: not y.is_cuda"
-        
-        params = params if params is not None else list(self.net.parameters())
-        assert len(params) > 0, "HyperLayer.run: len(params) == 0"
-        
-        self.opt = HSGD(params=params, hparams=hparams, szs=szs)
+        self.opt = HSGD(params=self.params, hparams=self.hparams, szs=szs)
         
         if check_perfect:
             orig_weights = self.opt._get_flat_params()
@@ -70,18 +61,14 @@ class HyperLayer(nn.Module):
         )
         
         # Compute performance
-        val_acc = self._validate(X=X_valid, y=y_valid)
-        
-        if X_test is not None:
-            test_acc = self._validate(X=X_test, y=y_test)
-        else:
-            test_acc = None
+        val_acc  = self._validate(X=X_valid, y=y_valid)
+        test_acc = self._validate(X=X_test, y=y_test) if X_test is not None else None
         
         # Save trained state
         state = deepcopy(self.net.state_dict())
         
         # Untrain
-        self._untrain(
+        _ = self._untrain(
             X_train=X_train,
             y_train=y_train,
             X_valid=X_valid,
@@ -97,13 +84,15 @@ class HyperLayer(nn.Module):
         if not untrain:
             self.net.load_state_dict(state)
         
-        # Update LR, MO, MTS
+        # Update LR, MO, META
         for hkey,grad in self.opt.d.items():
-            hparams[hkey].backward(grad)
+            if self.hparams[hkey].grad is not None:
+                self.hparams[hkey].grad.zero_()
+            self.hparams[hkey].backward(grad)
         
         # Update model parameters
         if update_weights:
-            for p,r in zip(params, self.opt.round_dx):
+            for p,r in zip(params, self.opt.get_init_params_grad()):
                 p.backward(r)
         
         return train_hist, val_acc, test_acc
@@ -119,7 +108,6 @@ class HyperLayer(nn.Module):
         for sgd_iter in gen:
             X_train_batch, y_train_batch = deterministic_batch(X_train, y_train, batch_size, seed=(self.seed, sgd_iter))
             
-            _ = self.net.zero_grad()
             _ = self.opt.zero_grad()
             logits = self.net(X_train_batch)
             loss = self.loss_fn(logits, y_train_batch)
@@ -144,12 +132,7 @@ class HyperLayer(nn.Module):
     def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size):
         _ = self.opt.zero_grad()
         
-        # Initialize backward -- method 1 (not scalable)
-        # def lf_all():
-        #     return self.loss_fn(self.net(X), y)
-        # self.opt.init_backward(lf_all)
-        
-        # Initialize backward -- method 2 (scalable, less tested)
+        # Initialize backward (wrt entire validation set)
         for chunk in np.array_split(np.arange(X_valid.size(0)), 10):
             chunk = torch.LongTensor(chunk).cuda()
             loss = self.loss_fn(self.net(X_valid[chunk]), y_valid[chunk], size_average=False)

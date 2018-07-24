@@ -27,3 +27,9 @@ def set_seeds(seed=100):
     _ = torch.manual_seed(seed + 123)
     _ = torch.cuda.manual_seed(seed + 456)
     _ = random.seed(seed + 789)
+
+
+def deterministic_batch(X, y, batch_size, seed):
+    idxs = np.random.RandomState(seed).randint(X.size(0), size=batch_size)
+    idxs = torch.LongTensor(idxs).cuda()
+    return X[idxs], y[idxs]

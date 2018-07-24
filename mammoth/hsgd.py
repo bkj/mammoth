@@ -49,14 +49,15 @@ class HSGD():
         
         # No sparse layers, yet
         for p in self.params:
-            if p.data.is_sparse:
-                raise NotImplemented
+            assert not p.data.is_sparse
     
     def zero_grad(self):
         for p in self.params:
             if p.grad is not None:
-                data = p.grad.data
-                p.grad = data.new().resize_as_(data).zero_()
+                p.grad.zero_()
+    
+    def _flatten(self, x):
+        return torch.cat([xx.contiguous().view(-1) for xx in x])
     
     def _get_flat_params(self):
         return torch.cat([p.contiguous().view(-1) for p in self.params], dim=0)
@@ -71,49 +72,13 @@ class HSGD():
         assert offset == self._numel, 'FlatHSGD._set_flat_params: offset != self._numel()'
     
     def _fill_parser(self, vals):
-        assert len(vals) == len(self._szs), (
-            '\n\nFlatHSGD._fill_parser: len(vals) != len(self._szs):\n'
-            '\t`lrs` or `mos` might be wrong dimension'
-        )
-        tmp = torch.cat([v.expand(int(s)) for v,s in zip(vals, self._szs)], dim=0).float()
-        old = torch.FloatTensor(to_numpy(vals).repeat(self._szs)).cuda()
-        assert (tmp == old).all()
-        return old
+        assert len(vals) == len(self._szs)
+        return torch.cat([v.expand(int(s)) for v,s in zip(vals, self._szs)], dim=0).detach()
     
     def _get_flat_grads(self):
-        views = []
-        for p in self.params:
-            if p.grad is None:
-                # view = p.data.new(p.data.numel()).zero_()
-                raise NotImplemented
-            elif p.grad.data.is_sparse:
-                # view = p.grad.data.to_dense().view(-1)
-                raise NotImplemented
-            else:
-                view = p.grad.data.view(-1)
-            views.append(view)
-        
-        return torch.cat(views, dim=0)
-    
-    def _flatten(self, x):
-        # !! This doesn't support sparse layers
-        return torch.cat([xx.contiguous().view(-1) for xx in x])
-    
-    @property
-    def round_dx(self):
-        offset = 0
-        out = []
-        for shape in self._shapes:
-            numel = np.prod(shape)
-            tmp = self.d_x[offset:(offset+numel)].view(shape)
-            out.append(tmp)
-        
-        return out
+        return torch.cat([p.grad.data.view(-1) for p in self.params], dim=0)
     
     def step(self, sgd_iter):
-        lr = self._fill_parser(self.lrs[sgd_iter])
-        mo = self._fill_parser(self.mos[sgd_iter])
-        
         flat_params = self._get_flat_params()
         flat_grad   = self._get_flat_grads()
         
@@ -121,6 +86,9 @@ class HSGD():
             self.eX = ETensor(flat_params.data.clone())
             self.eV = ETensor(flat_grad.clone().zero_())
             self.forward_ready = True
+            
+        lr = self._fill_parser(self.lrs[sgd_iter])
+        mo = self._fill_parser(self.mos[sgd_iter])
         
         _ = self.eV.mul(mo).sub(flat_grad)
         _ = self.eX.add(lr * self.eV.val)
@@ -139,8 +107,8 @@ class HSGD():
         mo = self._fill_parser(self.mos[sgd_iter])
         
         # Update learning rate
-        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-            self.d['lrs'][sgd_iter,j] = torch.dot(self.d_x[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
+        tmp = self.d_x * self.eV.val
+        self.d['lrs'][sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
         
         # Reverse SGD exactly
         _ = self.eX.sub(lr * self.eV.val)
@@ -151,24 +119,27 @@ class HSGD():
         
         # Update mo
         self.d_v += self.d_x * lr
-        for j,(offset, sz) in enumerate(zip(self._offsets, self._szs)):
-            self.d['mos'][sgd_iter,j] = torch.dot(self.d_v[offset:(offset+sz)], self.eV.val[offset:(offset+sz)])
+        tmp = self.d_v * self.eV.val
+        self.d['mos'][sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
         
         # Update auxilliary parameters
-        d_vpar   = Parameter(self.d_v, requires_grad=True)
-        lf_hvp_x = torch.dot(g, d_vpar)
+        lf_hvp_x = torch.dot(g, self.d_v)
         self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
         
         # (Maybe) update meta-parameters
         if self.meta is not None:
             g2 = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
-            d_vpar = Parameter(self.d_v, requires_grad=True)
-            lf_hvp_meta = (g2 * d_vpar).sum(dim=0, keepdim=True)
-            
+            lf_hvp_meta = (g2 * self.d_v).sum(dim=0, keepdim=True)
             self.d['meta'] -= self._flatten(autograd.grad(lf_hvp_meta, self.meta)).data
             
-            if self.meta.grad is not None:
-                _ = self.meta.grad.zero_()
-            
         self.d_v = self.d_v * mo
-
+    
+    def get_init_params_grad(self):
+        offset = 0
+        out = []
+        for shape in self._shapes:
+            numel = np.prod(shape)
+            tmp = self.d_x[offset:(offset+numel)].view(shape)
+            out.append(tmp)
+        
+        return out
