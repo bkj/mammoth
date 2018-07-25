@@ -1,10 +1,11 @@
 #!/usr/bin/env python
 
 """
-    hlayer.py
+    hyperlayer.py
 """
 
 import os
+import sys
 import numpy as np
 from tqdm import tqdm
 from copy import deepcopy
@@ -52,7 +53,7 @@ class HyperLayer(nn.Module):
     def run(self, 
         X_train, y_train, X_valid, y_valid, X_test=None, y_test=None,
         learn_lrs=True, learn_mos=True, learn_meta=True, learn_init=False,
-        szs=None, untrain=False, check_perfect=True):
+        szs=None, untrain=False, check_perfect=True, forward_only=False):
         
         if learn_init:
             assert untrain, "learn_init and not untrain"
@@ -82,35 +83,39 @@ class HyperLayer(nn.Module):
         test_acc = self._validate(X=X_test, y=y_test) if X_test is not None else None
         
         # Save trained state
-        state = deepcopy(self.net.state_dict())
-        
-        # Untrain
-        _ = self._untrain(
-            X_train=X_train,
-            y_train=y_train,
-            X_valid=X_valid,
-            y_valid=y_valid, 
-            num_iters=self.num_iters,
-            batch_size=self.batch_size,
-        )
-        
-        # Check that we've returned to _exactly_ correct location
-        if check_perfect:
-            untrained_weights = self.opt._get_flat_params()
-            assert (orig_weights == untrained_weights).all(), 'meta_iter: orig_weights != untrained_weights'
-        
-        # Set weights to trained values
-        if not untrain:
-            self.net.load_state_dict(state)
-        
-        # Propagate hypergradients
-        zero_grad(self.hparams['lrs'])
-        zero_grad(self.hparams['mos'])
-        zero_grad(self.hparams['meta'])
-        if learn_lrs:  self.hparams['lrs'].backward(self.opt.d_lrs)
-        if learn_mos:  self.hparams['mos'].backward(self.opt.d_mos)
-        if learn_meta: self.hparams['meta'].backward(self.opt.d_meta)
-        if learn_init: [zero_backward(p, g) for p,g in zip(self.params, self.opt.get_init_params_grad())]
+        if not forward_only:
+            state = deepcopy(self.net.state_dict())
+            
+            # Untrain
+            _ = self._untrain(
+                X_train=X_train,
+                y_train=y_train,
+                X_valid=X_valid,
+                y_valid=y_valid, 
+                num_iters=self.num_iters,
+                batch_size=self.batch_size,
+            )
+            
+            # Check that we've returned to _exactly_ correct location
+            if check_perfect:
+                untrained_weights = self.opt._get_flat_params()
+                assert (orig_weights == untrained_weights).all(), 'meta_iter: orig_weights != untrained_weights'
+            
+            # Set weights to trained values
+            if not untrain:
+                self.net.load_state_dict(state)
+            
+            # Propagate hypergradients
+            zero_grad(self.hparams['lrs'])
+            zero_grad(self.hparams['mos'])
+            zero_grad(self.hparams['meta'])
+            
+            if learn_lrs:  self.hparams['lrs'].backward(self.opt.d_lrs)
+            if learn_mos:  self.hparams['mos'].backward(self.opt.d_mos)
+            if learn_meta: self.hparams['meta'].backward(self.opt.d_meta)
+            if learn_init: [zero_backward(p, g) for p,g in zip(self.params, self.opt.get_init_params_grad())]
+        else:
+            print('Hyperlayer.run: forward_only', file=sys.stderr)
         
         return train_hist, val_acc, test_acc
     
@@ -138,12 +143,19 @@ class HyperLayer(nn.Module):
     
     def _validate(self, X=None, y=None, logits=None):
         if logits is None:
-            logits = self.net(X)
-        
-        # >>
-        preds = logits.max(dim=1)[1]
-        acc = (preds == y).float().mean()
-        return float(acc)
+            correct, total = 0.0, 0.0
+            for Xb, yb in zip(torch.split(X, 10), torch.split(y, 10)):
+                logits = self.net(Xb)
+                preds = logits.max(dim=1)[1]
+                correct += (preds == yb).float().sum()
+                total += preds.shape[0]
+            
+            return float(correct) / total
+        else:
+            # >>
+            preds = logits.max(dim=1)[1]
+            acc = (preds == y).float().mean()
+            return float(acc)
         # --
         # return float(logits.mean())
         # <<

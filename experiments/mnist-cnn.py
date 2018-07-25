@@ -29,23 +29,33 @@ from mammoth.optim import LambdaAdam
 torch.backends.cudnn.benchmark = True
 torch.backends.cudnn.deterministic = True
 
-set_seeds(123)
+seed = 123
+set_seeds(seed)
 
 # --
 # IO
 
-if not os.path.exists('.mnist'):
+if not os.path.exists('./data/prepped_mnist'):
     transform = transforms.ToTensor()
     
-    train_data = MNIST(root='./data', train=True, download=False, transform=transform)
+    train_data = MNIST(root='./data/mnist', train=True, download=True, transform=transform)
     X_train, y_train = zip(*train_data)
     X_train = torch.stack(X_train)
     y_train = torch.stack(y_train)
     
-    valid_data  = MNIST(root='./data', train=False, download=False, transform=transform)
+    mean = X_train.mean()
+    std  = X_train.std()
+    
+    X_train -= mean
+    X_train /= std
+    
+    valid_data  = MNIST(root='./data/mnist', train=False, download=True, transform=transform)
     X_valid, y_valid = zip(*valid_data)
     X_valid = torch.stack(X_valid)
     y_valid = torch.stack(y_valid)
+    
+    X_valid -= mean
+    X_valid /= std
     
     valid_idx, test_idx = train_test_split(range(X_valid.shape[0]), train_size=0.5)
     valid_idx, test_idx = sorted(valid_idx), sorted(test_idx)
@@ -53,12 +63,15 @@ if not os.path.exists('.mnist'):
     X_valid, X_test = X_valid[valid_idx], X_valid[test_idx]
     y_valid, y_test = y_valid[valid_idx], y_valid[test_idx]
     
-    torch.save((X_train, X_valid, X_test, y_train, y_valid, y_test), '.mnist')
+    torch.save((X_train, X_valid, X_test, y_train, y_valid, y_test), './data/prepped_mnist')
 
 
-X_train, X_valid, X_test, y_train, y_valid, y_test = [x.cuda() for x in torch.load('.mnist')]
+X_train, X_valid, X_test, y_train, y_valid, y_test = [x.cuda() for x in torch.load('./data/prepped_mnist')]
 X_train, X_valid, X_test = X_train.float(), X_valid.float(), X_test.float()
 y_train, y_valid, y_test = y_train.long(), y_valid.long(), y_test.long()
+
+assert X_train.mean() < 1e-6
+assert (X_train.std() - 1).abs() < 1e-6
 
 # --
 # Helpers
@@ -86,86 +99,42 @@ class Net(nn.Module):
         x = self.fc2(x)
         return x
 
+
 # --
 # Parameters
 
-num_iters  = 25
-batch_size = 400
+num_iters  = 300
+batch_size = 100
 verbose    = True
-
-seed       = 345
-hyper_lr   = 0.0001
+hyper_lr   = 0.05
 init_lr    = 0.1
 init_mo    = 0.9
-fix_init   = True
-fix_data   = True
 meta_iters = 20
-
-
-# --
-# Parameterize learning rates + momentum
-
-n_groups = len(list(Net().parameters()))
-
-# # Fixed, same across layers
-# lr_mean  = torch.FloatTensor(np.full((1, 1), init_lr))
-# mo_mean  = torch.FloatTensor(np.full((1, 1), init_mo))
-
-# # Fixed per layer
-# lr_mean  = torch.FloatTensor(np.full((1, n_groups), init_lr))
-# mo_mean  = torch.FloatTensor(np.full((1, n_groups), init_mo))
-
-# Totally learned
-lr_mean  = torch.FloatTensor(np.full((1, n_groups), init_lr))
-mo_mean  = torch.FloatTensor(np.full((1, n_groups), init_mo))
-lr_res   = torch.FloatTensor(np.full((num_iters, n_groups), 0.0))
-mo_res   = torch.FloatTensor(np.full((num_iters, n_groups), 0.0))
 
 # --
 # Run
 
-set_seeds(seed)
+set_seeds(seed + 111)
 
+n_groups = len(list(Net().parameters()))
 hparams = {
-    "lr_mean" : lr_mean,
-    "lr_res"  : lr_res,
-    "mo_mean" : mo_mean,
-    "mo_res"  : mo_res,
+    "lr_mean" : torch.FloatTensor(np.full((1, n_groups), init_lr)),
+    "mo_mean" : torch.FloatTensor(np.full((1, n_groups), init_mo)),
+    "lr_res"  : torch.FloatTensor(np.full((num_iters, n_groups), 0.0)),
+    "mo_res"  : torch.FloatTensor(np.full((num_iters, n_groups), 0.0)),
 }
 
 for k,v in hparams.items():
     hparams[k] = v.float().cuda().requires_grad_()
 
 hopt = LambdaAdam(
-    params=list(hparams.values()),# + list(net.parameters()), 
+    params=list(hparams.values()),
     lr=hyper_lr,
-    # lam=1e-3,
     lam=1,
 )
 
 hist = defaultdict(list)
 for meta_iter in range(0, meta_iters):
-    
-    # --
-    # Transform hyperparameters
-    
-    # Fixed, same across layers
-    # lrs = torch.clamp(hparams['lr_mean'].repeat(num_iters, n_groups), 0.001, 10.0)
-    # mos = torch.clamp(hparams['mo_mean'].repeat(num_iters, n_groups), 0.001, 0.999)
-    
-    # # Fixed, per layer
-    # lrs = torch.clamp(hparams['lr_mean'].repeat(num_iters, 1), 0.001, 10.0)
-    # mos = torch.clamp(hparams['mo_mean'].repeat(num_iters, 1), 0.001, 0.999)
-    
-    # Totally learned
-    lrs = torch.clamp(hparams['lr_mean'] + hparams['lr_res'], 0.001, 10.0)
-    mos = torch.clamp(hparams['mo_mean'] + hparams['mo_res'], 0.001, 0.999)
-    
-    # --
-    # Hyperstep
-    
-    if fix_init:
-        set_seeds(seed)
     
     net = Net().cuda()
     
@@ -173,14 +142,14 @@ for meta_iter in range(0, meta_iters):
     hlayer = HyperLayer(
         net=net, 
         hparams={
-            "lrs"  : lrs,
-            "mos"  : mos,
+            "lrs"  : torch.clamp(hparams['lr_mean'] + hparams['lr_res'], 0.001, 10.0),
+            "mos"  : torch.clamp(hparams['mo_mean'] + hparams['mo_res'], 0.001, 0.999),
             "meta" : None,
         },
         params=net.parameters(),
         num_iters=num_iters, 
         batch_size=batch_size,
-        seed=0 if fix_data else meta_iter,
+        seed=meta_iter,
         verbose=verbose,
     )
     train_hist, val_acc, test_acc = hlayer.run(
@@ -190,11 +159,10 @@ for meta_iter in range(0, meta_iters):
         y_valid=y_valid,
         X_test=X_test,
         y_test=y_test,
-        learn_lrs=False,
-        learn_mos=False,
+        learn_lrs=True,
+        learn_mos=True,
         learn_meta=False,
-        # learn_init=False,
-        # untrain=True,
+        forward_only=False,
     )
     _ = hopt.step()
     

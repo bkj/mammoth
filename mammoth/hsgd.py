@@ -90,7 +90,7 @@ class HSGD():
             self.eX = ETensor(flat_params.data.clone())
             self.eV = ETensor(flat_grad.clone().zero_())
             self.forward_ready = True
-            
+        
         lr = self._fill_parser(self.lrs[sgd_iter])
         mo = self._fill_parser(self.mos[sgd_iter])
         
