@@ -22,10 +22,12 @@ torch.backends.cudnn.deterministic = True
 # --
 # Hyperlayer
 
-def safe_backward(p, g):
+def zero_grad(p):
     if p.grad is not None:
         p.grad.zero_()
-    
+
+def safe_backward(p, g):
+    zero_grad(p)
     p.backward(g)
 
 
@@ -101,11 +103,12 @@ class HyperLayer(nn.Module):
             self.net.load_state_dict(state)
         
         # Propagate hypergradients
-        print()
-        
-        if learn_lrs:  safe_backward(self.hparams['lrs'], self.opt.d_lrs)
-        if learn_mos:  safe_backward(self.hparams['mos'], self.opt.d_mos)
-        if learn_meta: safe_backward(self.hparams['meta'], self.opt.d_meta)
+        zero_grad(self.hparams['lrs'])
+        zero_grad(self.hparams['mos'])
+        zero_grad(self.hparams['meta'])
+        if learn_lrs:  self.hparams['lrs'].backward(self.opt.d_lrs)
+        if learn_mos:  self.hparams['mos'].backward(self.opt.d_mos)
+        if learn_meta: self.hparams['meta'].backward(self.opt.d_meta)
         if learn_init: [safe_backward(p, g) for p,g in zip(self.params, self.opt.get_init_params_grad())]
         
         return train_hist, val_acc, test_acc
@@ -137,11 +140,11 @@ class HyperLayer(nn.Module):
             logits = self.net(X)
         
         # >>
-        # preds = logits.max(dim=1)[1]
-        # acc = (preds == y).float().mean()
-        # return float(acc)
+        preds = logits.max(dim=1)[1]
+        acc = (preds == y).float().mean()
+        return float(acc)
         # --
-        return float(logits.mean())
+        # return float(logits.mean())
         # <<
     
     def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size):

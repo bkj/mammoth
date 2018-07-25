@@ -88,9 +88,6 @@ mo_mean = torch.tensor(np.full((1, n_groups), init_mo)).cuda().requires_grad_()
 mo_res  = torch.tensor(np.full((num_iters, n_groups), 0.0)).cuda().requires_grad_()
 
 # --
-# Hyper-optimizer
-
-# --
 # Run
 
 set_seeds(123)

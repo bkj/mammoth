@@ -23,7 +23,7 @@ from mammoth.helpers import to_numpy, set_seeds
 from mammoth.hyperlayer import HyperLayer
 from mammoth.optim import LambdaAdam
 
-# torch.set_default_tensor_type('torch.DoubleTensor')
+torch.set_default_tensor_type('torch.DoubleTensor')
 
 # --
 # IO
@@ -41,7 +41,7 @@ class Net(nn.Module):
         self.W    = nn.Parameter(torch.tensor([1.0]))
     
     def forward(self, x):
-        out = (1 + self.W ** 2) + (self.meta ** 2)
+        out = (self.W ** 2) + (self.meta ** 2)
         return out.expand(x.shape[0])
 
 # --
@@ -51,14 +51,13 @@ num_iters  = 10
 batch_size = 1
 verbose    = False
 
-
 seed       = 345
 hyper_lr   = 0.04
 init_lr    = 0.1
 init_mo    = 0.5
 fix_init   = True
 fix_data   = True
-meta_iters = 100
+meta_iters = 250
 
 
 # --
@@ -90,6 +89,7 @@ hopt = LambdaAdam(
     lr=hyper_lr,
     betas=(0.9, 0.99),
     lam=1e-4,
+    # lam=1,
 )
 
 hist = defaultdict(list)
@@ -99,8 +99,8 @@ for meta_iter in range(0, meta_iters):
     # --
     # Transform hyperparameters
     
-    lrs = hparams['lr_mean'].repeat(num_iters, n_groups)
-    mos = hparams['mo_mean'].repeat(num_iters, n_groups)
+    lrs = torch.clamp(hparams['lr_mean'].repeat(num_iters, n_groups), min=0, max=1000)
+    mos = torch.clamp(hparams['mo_mean'].repeat(num_iters, n_groups), min=1e-4, max=1 - 1e-4)
     
     # --
     # Hyperstep
@@ -130,14 +130,12 @@ for meta_iter in range(0, meta_iters):
         y_train=torch.zeros(1000), 
         X_valid=torch.zeros(1000),
         y_valid=torch.zeros(1000),
-        learn_lrs=False,
+        learn_lrs=True,
         learn_mos=False,
-        learn_meta=True,
+        learn_meta=False,
         learn_init=False,
     )
     _ = hopt.step()
-    
-    print('***** meta', float(hparams['meta']))
     
     # --
     # Logging
@@ -147,35 +145,27 @@ for meta_iter in range(0, meta_iters):
     hist['test_acc'].append(test_acc)
     hist['hparams'].append({k:to_numpy(v.clone()) for k,v in hparams.items()})
     
-    # print(json.dumps({
-    #     "meta_iter" : meta_iter,
-    #     "train_acc" : float(np.mean([t['acc'] for t in train_hist[-10:]])),
-    #     "val_acc"   : val_acc,
-    #     "test_acc"  : test_acc,
-    #     "time"      : time() - t
-    # }))
+    print(json.dumps({
+        "meta_iter"  : meta_iter,
+        "meta_value" : float(hparams['meta']),
+        "lr_value"   : float(hparams['lr_mean'][0][0]),
+        "train_acc"  : float(np.mean([t['acc'] for t in train_hist[-10:]])),
+        "val_acc"    : val_acc,
+        "test_acc"   : test_acc,
+        "time"       : time() - t
+    }))
     sys.stdout.flush()
 
 # --
-# # Plot results
+# Plot results
 
-# _ = plt.plot([float(h['meta']) for h in hist['hparams']], label='alpha')
-# _ = plt.plot([float(h['lr_mean'][0][0]) for h in hist['hparams']], label='lr_mean')
-# _ = plt.plot([float(h['mo_mean'][0][0]) for h in hist['hparams']], label='mo_mean')
-# _ = plt.legend(fontsize=8)
-# show_plot()
+_ = plt.plot([float(h['meta']) for h in hist['hparams']], label='alpha')
+_ = plt.plot([float(h['lr_mean'][0][0]) for h in hist['hparams']], label='lr_mean')
+_ = plt.plot([float(h['mo_mean'][0][0]) for h in hist['hparams']], label='mo_mean')
+_ = plt.legend(fontsize=8)
+show_plot()
 
-# _ = plt.plot(hist['val_acc'], label='val_acc')
-# _ = plt.plot(hist['test_acc'], label='test_acc')
-# _ = plt.legend()
-# show_plot()
-
-
-# # # param_names = [k[0] for k in net.named_parameters()]
-# # # for i, lr in enumerate(to_numpy(mos).T):
-# # #     if 'weight' in param_names[i]:
-# # #         _ = plt.plot(lr, label=param_names[i])
-
-# # # _ = plt.legend(fontsize=8)
-# # # show_plot()
-
+_ = plt.plot(hist['val_acc'], label='val_acc')
+_ = plt.plot(hist['test_acc'], label='test_acc')
+_ = plt.legend()
+show_plot()

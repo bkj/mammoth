@@ -21,6 +21,7 @@ sys.path.append('../mammoth')
 from mammoth.utils import load_data
 from mammoth.helpers import to_numpy, set_seeds
 from mammoth.hyperlayer import HyperLayer
+from mammoth.optim import LambdaAdam
 
 # --
 # IO
@@ -68,13 +69,13 @@ class Net(nn.Module):
 # --
 # Parameters
 
-# num_iters  = 200
-# batch_size = 200
-# verbose    = False
+num_iters  = 100
+batch_size = 100
+verbose    = False
 
-num_iters  = 176 * 10
-batch_size = 256
-verbose    = True
+# num_iters  = 176 * 10
+# batch_size = 256
+# verbose    = True
 
 seed       = 345
 hyper_lr   = 0.01
@@ -88,7 +89,7 @@ meta_iters = 20
 # --
 # Parameterize learning rates + momentum
 
-alpha    = torch.tensor([0.9])
+alpha    = torch.tensor([0.1])
 
 n_groups = len(list(Net(alpha=alpha).parameters()))
 
@@ -122,9 +123,11 @@ hparams = {
 for k,v in hparams.items():
     hparams[k] = v.cuda().requires_grad_()
 
-hopt = torch.optim.Adam(
+hopt = LambdaAdam(
     params=hparams.values(),
     lr=hyper_lr,
+    # lam=1,
+    lam=1e-3,
 )
 
 hist = defaultdict(list)
@@ -175,6 +178,10 @@ for meta_iter in range(0, meta_iters):
         y_valid=y_valid,
         X_test=X_test,
         y_test=y_test,
+        learn_lrs=True,
+        learn_mos=True,
+        learn_meta=True,
+        learn_init=False,
     )
     _ = hopt.step()
     
@@ -191,16 +198,19 @@ for meta_iter in range(0, meta_iters):
         "train_acc" : float(np.mean([t['acc'] for t in train_hist[-10:]])),
         "val_acc"   : val_acc,
         "test_acc"  : test_acc,
-        "time"      : time() - t
+        "time"      : time() - t,
+        
+        "alpha" : float(hparams['alpha']),
     }))
     sys.stdout.flush()
 
 # --
 # Plot results
 
-_ = plt.plot([float(h['alpha']) for h in hist['hparams']])
-_ = plt.plot([float(h['lr_mean'][0][0]) for h in hist['hparams']])
-_ = plt.plot([float(h['mo_mean'][0][0]) for h in hist['hparams']])
+_ = plt.plot([float(h['alpha']) for h in hist['hparams']], label='alpha')
+_ = plt.plot([float(h['lr_mean'][0][0]) for h in hist['hparams']], label='lr_mean')
+_ = plt.plot([float(h['mo_mean'][0][0]) for h in hist['hparams']], label='mo_mean')
+_ = plt.legend()
 show_plot()
 
 _ = plt.plot(hist['val_acc'], label='val_acc')
@@ -208,9 +218,8 @@ _ = plt.plot(hist['test_acc'], label='test_acc')
 _ = plt.legend()
 show_plot()
 
-
 param_names = [k[0] for k in net.named_parameters()]
-for i, lr in enumerate(to_numpy(mos).T):
+for i, lr in enumerate(to_numpy(lrs).T):
     if 'weight' in param_names[i]:
         _ = plt.plot(lr, label=param_names[i])
 

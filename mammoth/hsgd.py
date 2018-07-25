@@ -100,7 +100,7 @@ class HSGD():
     
     def init_backward(self, lf_init):
         assert self.forward_ready, 'cannot init_backward before calling HSGD.step'
-        self.d_x    = self._flatten(autograd.grad(lf_init(), self.params)).data
+        self.d_x = self._flatten(autograd.grad(lf_init(), self.params)).data
         if self.learn_meta:
             self.d_meta = self._flatten(autograd.grad(lf_init(), self.meta)).data
         
