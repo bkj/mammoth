@@ -138,14 +138,12 @@ class HSGD():
         
         # Weight gradient
         g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
-        lf_hvp_x = (g * ((1 - mo) * self.d_v)).sum()
-        self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
+        lf_hvp = (g * ((1 - mo) * self.d_v)).sum()
+        self.d_x -= self._flatten(autograd.grad(lf_hvp, self.params, retain_graph=True)).data
         
         # Meta gradient
         if self.learn_meta:
-            g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
-            lf_hvp_mts = (g * ((1 - mo) * self.d_v)).sum()
-            self.d_meta -= self._flatten(autograd.grad(lf_hvp_mts, self.meta)).data
+            self.d_meta -= self._flatten(autograd.grad(lf_hvp, self.meta)).data
             
         self.d_v *= mo
     
