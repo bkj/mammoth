@@ -63,7 +63,7 @@ verbose    = False
 # verbose    = True
 
 seed       = 345
-hyper_lr   = 0.01
+hyper_lr   = 0.04
 init_lr    = 0.01
 init_mo    = 0.9
 fix_init   = True
@@ -109,11 +109,10 @@ hparams = {
 for k,v in hparams.items():
     hparams[k] = v.cuda().requires_grad_()
 
-hopt = torch.optim.SGD(
+hopt = torch.optim.Adam(
     # params=hparams.values(),
     params=[hparams['alpha']],
     lr=hyper_lr,
-    # momentum=0.9,
 )
 
 hist = defaultdict(list)
