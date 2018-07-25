@@ -23,10 +23,11 @@ torch.backends.cudnn.deterministic = True
 # Hyperlayer
 
 def zero_grad(p):
-    if p.grad is not None:
-        p.grad.zero_()
+    if p is not None:
+        if p.grad is not None:
+            p.grad.zero_()
 
-def safe_backward(p, g):
+def zero_backward(p, g):
     zero_grad(p)
     p.backward(g)
 
@@ -109,7 +110,7 @@ class HyperLayer(nn.Module):
         if learn_lrs:  self.hparams['lrs'].backward(self.opt.d_lrs)
         if learn_mos:  self.hparams['mos'].backward(self.opt.d_mos)
         if learn_meta: self.hparams['meta'].backward(self.opt.d_meta)
-        if learn_init: [safe_backward(p, g) for p,g in zip(self.params, self.opt.get_init_params_grad())]
+        if learn_init: [zero_backward(p, g) for p,g in zip(self.params, self.opt.get_init_params_grad())]
         
         return train_hist, val_acc, test_acc
     
