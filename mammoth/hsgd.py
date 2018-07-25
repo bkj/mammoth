@@ -15,26 +15,35 @@ from .helpers import to_numpy
 from .exact_reps import ETensor_torch as ETensor
 
 class HSGD():
-    def __init__(self, params, hparams, szs=None):
+    def __init__(self, params, hparams, szs=None, learn_lrs=True, learn_mos=True, learn_meta=True):
         """
             params:  parameters to optimize
             hparams: hyperparamters to optimize
         """
         
-        assert 'lrs' in hparams, 'lrs' not in hparams
-        assert 'mos' in hparams, 'mos' not in hparams
+        assert 'lrs' in hparams, "'lrs' not in hparams"
+        assert 'mos' in hparams, "'mos' not in hparams"
+        if learn_meta:
+            assert 'meta' in hparams, "'meta' not in hparams"
         
-        self.params = list(params)
+        self.params     = list(params)
         
-        # hparams
-        self.lrs  = hparams.get('lrs', None)
-        self.mos  = hparams.get('mos', None)
+        self.learn_lrs  = learn_lrs
+        self.learn_mos  = learn_mos
+        self.learn_meta = learn_meta
+        
+        self.lrs  = hparams['lrs']
+        self.mos  = hparams['mos']
         self.meta = hparams.get('meta', None)
         
-        # hparam derivatives
-        self.d = {}
-        for k,v in hparams.items():
-            self.d[k] = v.data.clone().zero_()
+        if self.learn_lrs:
+            self.d_lrs  = self.lrs.data.clone().zero_()
+        
+        if self.learn_mos:
+            self.d_mos  = self.mos.data.clone().zero_()
+        
+        if self.learn_meta:
+            self.d_meta = self.meta.data.clone().zero_()
         
         self.d_v = self._get_flat_params().data.clone().zero_()
         self.d_g = self._get_flat_params().data.clone().zero_()
@@ -94,10 +103,12 @@ class HSGD():
         _ = self.eX.add(lr * self.eV.val)
         _ = self._set_flat_params(self.eX.val)
     
-    def init_backward(self, lf):
+    def init_backward(self, lf_init):
         assert self.forward_ready, 'cannot init_backward before calling HSGD.step'
-        self.d_x = self._flatten(autograd.grad(lf(), self.params)).data
-        self.g_data = self.d_x.clone()
+        self.d_x    = self._flatten(autograd.grad(lf_init(), self.params)).data
+        if self.learn_meta:
+            self.d_meta = self._flatten(autograd.grad(lf_init(), self.meta)).data
+        
         self.backward_ready = True
         
     def unstep(self, lf, sgd_iter):
@@ -107,30 +118,34 @@ class HSGD():
         mo = self._fill_parser(self.mos[sgd_iter])
         
         # Update learning rate
-        tmp = self.d_x * self.eV.val
-        self.d['lrs'][sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
+        if self.learn_lrs:
+            tmp = self.d_x * self.eV.val
+            self.d_lrs[sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
         
         # Reverse SGD exactly
         _ = self.eX.sub(lr * self.eV.val)
         _ = self._set_flat_params(self.eX.val)
         g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
-        self.g_data = g.data
         _ = self.eV.add((1 - mo) * g.data).unmul(mo)
         
-        # Update mo
-        self.d_v += self.d_x * lr
-        tmp = self.d_v * (self.eV.val + g.data)
-        self.d['mos'][sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
         
-        # Update auxilliary parameters and (maybe) meta-parameters
+        self.d_v += self.d_x * lr
+        
+        # Update mo
+        if self.learn_mos:
+            tmp = self.d_v * (self.eV.val + g.data)
+            self.d_mos[sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
+        
+        # Weight gradient
         g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
         lf_hvp_x = (g * ((1 - mo) * self.d_v)).sum()
         self.d_x -= self._flatten(autograd.grad(lf_hvp_x, self.params)).data
         
-        if self.meta is not None:
+        # Meta gradient
+        if self.learn_meta:
             g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
             lf_hvp_mts = (g * ((1 - mo) * self.d_v)).sum()
-            self.d['meta'] -= self._flatten(autograd.grad(lf_hvp_mts, self.meta)).data
+            self.d_meta -= self._flatten(autograd.grad(lf_hvp_mts, self.meta)).data
             
         self.d_v *= mo
     
