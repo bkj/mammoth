@@ -22,6 +22,8 @@ from mammoth.utils import load_data
 from mammoth.helpers import to_numpy, set_seeds
 from mammoth.hyperlayer import HyperLayer
 
+# torch.set_default_tensor_type('torch.DoubleTensor')
+
 # --
 # IO
 
@@ -38,7 +40,7 @@ class Net(nn.Module):
         self.W    = nn.Parameter(torch.tensor([1.0]))
     
     def forward(self, x):
-        out = (self.W ** 2) + (self.meta ** 2)
+        out = (1 + self.W ** 2) + (self.meta ** 2)
         return out.expand(x.shape[0])
 
 # --
@@ -50,7 +52,7 @@ verbose    = False
 
 
 seed       = 345
-hyper_lr   = 0.04
+hyper_lr   = 0.02
 init_lr    = 0.1
 init_mo    = 0.5
 fix_init   = True
@@ -65,8 +67,8 @@ meta    = torch.tensor([-1.0])
 
 n_groups = len(list(Net(meta=meta).parameters()))
 
-lr_mean  = torch.FloatTensor(np.full((1, 1), init_lr))
-mo_mean  = torch.FloatTensor(np.full((1, 1), init_mo))
+lr_mean  = torch.tensor(np.full((1, 1), init_lr)).type(torch.get_default_dtype())
+mo_mean  = torch.tensor(np.full((1, 1), init_mo)).type(torch.get_default_dtype())
 
 # --
 # Run
@@ -80,12 +82,12 @@ hparams = {
 }
 
 for k,v in hparams.items():
-    hparams[k] = v.cuda().requires_grad_()
+    hparams[k] = v.requires_grad_()
 
 hopt = torch.optim.Adam(
-    params=[hparams['meta']],
+    params=hparams.values(),
     lr=hyper_lr,
-    eps=1e-4,
+    betas=(0.9, 0.99),
 )
 
 hist = defaultdict(list)
@@ -95,9 +97,8 @@ for meta_iter in range(0, meta_iters):
     # --
     # Transform hyperparameters
     
-    # Fixed, same for all layers
-    lrs = torch.clamp(hparams['lr_mean'].repeat(num_iters, n_groups), 0.001, 10.0)
-    mos = torch.clamp(hparams['mo_mean'].repeat(num_iters, n_groups), 0.001, 0.999)
+    lrs = hparams['lr_mean'].repeat(num_iters, n_groups)
+    mos = hparams['mo_mean'].repeat(num_iters, n_groups)
     
     # --
     # Hyperstep
@@ -105,7 +106,7 @@ for meta_iter in range(0, meta_iters):
     if fix_init:
         set_seeds(seed)
     
-    net = Net(meta=hparams['meta']).cuda()
+    net = Net(meta=hparams['meta'])
     
     _ = hopt.zero_grad()
     hlayer = HyperLayer(
@@ -123,10 +124,14 @@ for meta_iter in range(0, meta_iters):
         loss_fn=F.l1_loss,
     )
     train_hist, val_acc, test_acc = hlayer.run(
-        X_train=torch.zeros(1000).cuda(),
-        y_train=torch.zeros(1000).cuda(), 
-        X_valid=torch.zeros(1000).cuda(),
-        y_valid=torch.zeros(1000).cuda(),
+        X_train=torch.zeros(1000),
+        y_train=torch.zeros(1000), 
+        X_valid=torch.zeros(1000),
+        y_valid=torch.zeros(1000),
+        learn_lrs=False,
+        learn_mos=False,
+        learn_meta=True,
+        learn_init=False,
     )
     _ = hopt.step()
     
@@ -152,16 +157,16 @@ for meta_iter in range(0, meta_iters):
 # --
 # Plot results
 
-# _ = plt.plot([float(h['meta']) for h in hist['hparams']], label='alpha')
-# _ = plt.plot([float(h['lr_mean'][0][0]) for h in hist['hparams']], label='lr_mean')
-# _ = plt.plot([float(h['mo_mean'][0][0]) for h in hist['hparams']], label='mo_mean')
-# _ = plt.legend(fontsize=8)
-# show_plot()
+_ = plt.plot([float(h['meta']) for h in hist['hparams']], label='alpha')
+_ = plt.plot([float(h['lr_mean'][0][0]) for h in hist['hparams']], label='lr_mean')
+_ = plt.plot([float(h['mo_mean'][0][0]) for h in hist['hparams']], label='mo_mean')
+_ = plt.legend(fontsize=8)
+show_plot()
 
-# _ = plt.plot(hist['val_acc'], label='val_acc')
-# _ = plt.plot(hist['test_acc'], label='test_acc')
-# _ = plt.legend()
-# show_plot()
+_ = plt.plot(hist['val_acc'], label='val_acc')
+_ = plt.plot(hist['test_acc'], label='test_acc')
+_ = plt.legend()
+show_plot()
 
 
 # # param_names = [k[0] for k in net.named_parameters()]

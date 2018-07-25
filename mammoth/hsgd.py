@@ -36,14 +36,9 @@ class HSGD():
         self.mos  = hparams['mos']
         self.meta = hparams.get('meta', None)
         
-        if self.learn_lrs:
-            self.d_lrs  = self.lrs.data.clone().zero_()
-        
-        if self.learn_mos:
-            self.d_mos  = self.mos.data.clone().zero_()
-        
-        if self.learn_meta:
-            self.d_meta = self.meta.data.clone().zero_()
+        self.d_lrs  = self.lrs.data.clone().zero_() if self.learn_lrs else None
+        self.d_mos  = self.mos.data.clone().zero_() if self.learn_mos else None
+        self.d_meta = self.meta.data.clone().zero_() if self.learn_meta else None
         
         self.d_v = self._get_flat_params().data.clone().zero_()
         self.d_g = self._get_flat_params().data.clone().zero_()
@@ -53,7 +48,7 @@ class HSGD():
         self._szs     = szs if szs is not None else [np.prod(p.size()) for p in self.params]
         self._offsets = [0] + list(np.cumsum(self._szs))[:-1]
         
-        self.forward_ready = False
+        self.forward_ready  = False
         self.backward_ready = False
         
         # No sparse layers, yet
@@ -127,7 +122,6 @@ class HSGD():
         _ = self._set_flat_params(self.eX.val)
         g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
         _ = self.eV.add((1 - mo) * g.data).unmul(mo)
-        
         
         self.d_v += self.d_x * lr
         

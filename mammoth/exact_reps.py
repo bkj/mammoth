@@ -13,14 +13,18 @@ import torch
 import numpy as np
 from .helpers import to_numpy
 
-float_cast = lambda x: x.float()
-# double_cast = lambda x: x.double()
+_float_cast = lambda x: x.float()
+_double_cast = lambda x: x.double()
 
 class _ETensor_torch(object):
     RADIX_SCALE = int(2 ** 52)
     def __init__(self, val):
+        if val.dtype == torch.float32:
+            self._cast = _float_cast
+        elif val.dtype == torch.float64:
+            self._cast = _double_cast
+        
         self.cuda = val.is_cuda
-        self._cast = float_cast
         
         self.intrep = self.float_to_intrep(val)
         self.size = val.size()

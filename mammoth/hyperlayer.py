@@ -28,6 +28,7 @@ def safe_backward(p, g):
     
     p.backward(g)
 
+
 class HyperLayer(nn.Module):
     def __init__(self, net, params, hparams, 
         num_iters=32, batch_size=32, seed=0, loss_fn=F.cross_entropy, verbose=True):
@@ -45,14 +46,13 @@ class HyperLayer(nn.Module):
         
         assert len(self.params) > 0, "HyperLayer.__init__: len(params) == 0"
     
-    def run(self, X_train, y_train, X_valid, y_valid, X_test=None, y_test=None,
-        szs=None, untrain=False, check_perfect=True, 
-        learn_lrs=True, learn_mos=True, learn_meta=True, learn_init=False):
-        """
-            learn_weights  : backprop into the initialization
-            untrain:       : resulting weights are the same as initial weights
-            check_perfect  : make sure weights after untraining are _exactly_ the initial weights
-        """
+    def run(self, 
+        X_train, y_train, X_valid, y_valid, X_test=None, y_test=None,
+        learn_lrs=True, learn_mos=True, learn_meta=True, learn_init=False,
+        szs=None, untrain=False, check_perfect=True):
+        
+        if learn_init:
+            assert untrain, "learn_init and not untrain"
         
         self.opt = HSGD(
             params=self.params,
@@ -91,32 +91,26 @@ class HyperLayer(nn.Module):
             batch_size=self.batch_size,
         )
         
+        # Check that we've returned to _exactly_ correct location
         if check_perfect:
             untrained_weights = self.opt._get_flat_params()
             assert (orig_weights == untrained_weights).all(), 'meta_iter: orig_weights != untrained_weights'
         
+        # Set weights to trained values
         if not untrain:
             self.net.load_state_dict(state)
         
-        # Update LR, MO, META, initial weights
-        if learn_lrs:
-            safe_backward(self.hparams['lrs'], self.opt.d_lrs)
+        # Propagate hypergradients
+        print()
         
-        if learn_mos:
-            safe_backward(self.hparams['mos'], self.opt.d_mos)
-        
-        if learn_meta:
-            safe_backward(self.hparams['meta'], self.opt.d_meta)
-        
-        if learn_init:
-            for p,r in zip(params, self.opt.get_init_params_grad()):
-                p.backward(r)
+        if learn_lrs:  safe_backward(self.hparams['lrs'], self.opt.d_lrs)
+        if learn_mos:  safe_backward(self.hparams['mos'], self.opt.d_mos)
+        if learn_meta: safe_backward(self.hparams['meta'], self.opt.d_meta)
+        if learn_init: [safe_backward(p, g) for p,g in zip(self.params, self.opt.get_init_params_grad())]
         
         return train_hist, val_acc, test_acc
     
     def _train(self, X_train, y_train, num_iters, batch_size):
-        
-        # Run forward
         hist = []
         gen = range(num_iters)
         if self.verbose:
@@ -142,9 +136,13 @@ class HyperLayer(nn.Module):
         if logits is None:
             logits = self.net(X)
         
+        # >>
         # preds = logits.max(dim=1)[1]
         # acc = (preds == y).float().mean()
+        # return float(acc)
+        # --
         return float(logits.mean())
+        # <<
     
     def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size):
         _ = self.opt.zero_grad()

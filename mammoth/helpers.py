@@ -31,5 +31,7 @@ def set_seeds(seed=100):
 
 def deterministic_batch(X, y, batch_size, seed):
     idxs = np.random.RandomState(seed).randint(X.size(0), size=batch_size)
-    idxs = torch.LongTensor(idxs).cuda()
+    idxs = torch.LongTensor(idxs)
+    if X.is_cuda:
+        idxs = idxs.cuda()
     return X[idxs], y[idxs]
