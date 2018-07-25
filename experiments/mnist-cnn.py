@@ -103,25 +103,23 @@ class Net(nn.Module):
 # --
 # Parameters
 
-num_iters  = 300
+num_iters  = 100
 batch_size = 100
 verbose    = True
 hyper_lr   = 0.05
-init_lr    = 0.1
-init_mo    = 0.9
+init_lr    = -1
+init_mo    = -1
 meta_iters = 20
 
 # --
 # Run
 
-set_seeds(seed + 111)
+set_seeds(seed + 1)
 
 n_groups = len(list(Net().parameters()))
 hparams = {
-    "lr_mean" : torch.FloatTensor(np.full((1, n_groups), init_lr)),
-    "mo_mean" : torch.FloatTensor(np.full((1, n_groups), init_mo)),
-    "lr_res"  : torch.FloatTensor(np.full((num_iters, n_groups), 0.0)),
-    "mo_res"  : torch.FloatTensor(np.full((num_iters, n_groups), 0.0)),
+    "lr"  : torch.FloatTensor(np.full((num_iters, n_groups), init_lr)),
+    "mo"  : torch.FloatTensor(np.full((num_iters, n_groups), init_mo)),
 }
 
 for k,v in hparams.items():
@@ -142,14 +140,14 @@ for meta_iter in range(0, meta_iters):
     hlayer = HyperLayer(
         net=net, 
         hparams={
-            "lrs"  : torch.clamp(hparams['lr_mean'] + hparams['lr_res'], 0.001, 10.0),
-            "mos"  : torch.clamp(hparams['mo_mean'] + hparams['mo_res'], 0.001, 0.999),
+            "lrs"  : 10 ** hparams['lr'],
+            "mos"  : 1 - (10 ** hparams['mo']),
             "meta" : None,
         },
         params=net.parameters(),
         num_iters=num_iters, 
         batch_size=batch_size,
-        seed=meta_iter,
+        seed=(seed * meta_iter),
         verbose=verbose,
     )
     train_hist, val_acc, test_acc = hlayer.run(
@@ -190,7 +188,7 @@ _ = plt.plot(hist['test_acc'], label='test_acc')
 _ = plt.legend()
 show_plot()
 
-for lr in to_numpy(lrs).T:
+for lr in to_numpy(10 ** hparams['lr']).T:
     _ = plt.plot(lr)
 
 show_plot()
