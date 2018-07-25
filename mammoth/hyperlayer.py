@@ -53,20 +53,25 @@ class HyperLayer(nn.Module):
             orig_weights = self.opt._get_flat_params()
         
         # Run hyperstep
+        # print('-- train --')
         train_hist = self._train(
             X_train=X_train,
             y_train=y_train,
             num_iters=self.num_iters,
             batch_size=self.batch_size,
         )
+        # print('-- done train --')
         
         # Compute performance
+        # print('-- accs --')
         val_acc  = self._validate(X=X_valid, y=y_valid)
         test_acc = self._validate(X=X_test, y=y_test) if X_test is not None else None
+        # print('-- done accs --')
         
         # Save trained state
         state = deepcopy(self.net.state_dict())
         
+        # print('-- untrain --')
         # Untrain
         _ = self._untrain(
             X_train=X_train,
@@ -76,6 +81,7 @@ class HyperLayer(nn.Module):
             num_iters=self.num_iters,
             batch_size=self.batch_size,
         )
+        # print('-- done untrain --')
         
         if check_perfect:
             untrained_weights = self.opt._get_flat_params()
@@ -88,6 +94,8 @@ class HyperLayer(nn.Module):
         for hkey,grad in self.opt.d.items():
             if self.hparams[hkey].grad is not None:
                 self.hparams[hkey].grad.zero_()
+            # if hkey == 'meta':
+                # print('grad', grad)
             self.hparams[hkey].backward(grad)
         
         # Update model parameters
@@ -125,18 +133,20 @@ class HyperLayer(nn.Module):
         if logits is None:
             logits = self.net(X)
         
-        preds = logits.max(dim=1)[1]
-        acc = (preds == y).float().mean()
-        return float(acc)
+        # preds = logits.max(dim=1)[1]
+        # acc = (preds == y).float().mean()
+        return float((logits ** 2).mean())
     
     def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size):
         _ = self.opt.zero_grad()
         
         # Initialize backward (wrt entire validation set)
+        # print('-- init back --')
         for chunk in np.array_split(np.arange(X_valid.size(0)), 10):
             chunk = torch.LongTensor(chunk).cuda()
             loss = self.loss_fn(self.net(X_valid[chunk]), y_valid[chunk], size_average=False)
             loss.backward()
+        # print('-- done init back --')
         
         g = self.opt._flatten([p.grad for p in self.opt.params]).data
         g /= X_train.size(0)
@@ -152,6 +162,8 @@ class HyperLayer(nn.Module):
         
         for sgd_iter in gen:
             X_train_batch, y_train_batch = deterministic_batch(X_train, y_train, batch_size, seed=(self.seed, sgd_iter))
-            lf = lambda: self.loss_fn(self.net(X_train_batch), y_train_batch)
+            def lf():
+                return self.loss_fn(self.net(X_train_batch), y_train_batch)
+            
             _ = self.opt.zero_grad()
             _ = self.opt.unstep(lf, sgd_iter)

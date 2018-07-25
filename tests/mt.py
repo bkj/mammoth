@@ -45,66 +45,53 @@ class Net(nn.Module):
         super().__init__()
         
         self.alpha = alpha
-        
-        self.layers1 = nn.Sequential(
-            nn.Linear(784, layers[0]),
-            nn.Tanh(),
-            nn.Linear(layers[0], layers[1]),
-            nn.Tanh(),
-            nn.Linear(layers[1], layers[2]),
-            nn.Tanh(),
-            nn.Linear(layers[2], 10),
-        )
-        
-        self.layers2 = nn.Sequential(
-            nn.Linear(784, 2),
-            nn.Linear(2, 10),
-        )
+        self.beta  = nn.Parameter(torch.tensor([1.0, 1.0, 1.0]))
     
     def forward(self, x):
-        return self.alpha * self.layers1(x) + (1 - self.alpha) * self.layers2(x)
-
+        out = (self.beta[0] ** 2) + (self.alpha[0] ** 2)
+        return out.expand(x.shape[0])
 
 # --
 # Parameters
 
-# num_iters  = 200
-# batch_size = 200
-# verbose    = False
+num_iters  = 2
+batch_size = 4
+verbose    = False
 
-num_iters  = 176 * 10
-batch_size = 256
-verbose    = True
+# num_iters  = 176 * 10
+# batch_size = 256
+# verbose    = True
 
 seed       = 345
 hyper_lr   = 0.01
-init_lr    = 0.30
-init_mo    = 0.50
-fix_init   = False
-fix_data   = False
-meta_iters = 20
+init_lr    = 0.01
+init_mo    = 0.9
+fix_init   = True
+fix_data   = True
+meta_iters = 100
 
 
 # --
 # Parameterize learning rates + momentum
 
-alpha    = torch.tensor([0.9])
+alpha    = torch.tensor([1.0, 1.0])
 
 n_groups = len(list(Net(alpha=alpha).parameters()))
+print('n_groups', n_groups)
 
-# # Globally constant
-# lr_mean  = torch.FloatTensor(np.full((1, 1), init_lr))
-# mo_mean  = torch.FloatTensor(np.full((1, 1), init_mo))
+# Globally constant
+lr_mean  = torch.FloatTensor(np.full((1, 1), init_lr))
+mo_mean  = torch.FloatTensor(np.full((1, 1), init_mo))
 
 # # Different per layer
 # lr_mean  = torch.FloatTensor(np.full((1, n_groups), init_lr))
 # mo_mean  = torch.FloatTensor(np.full((1, n_groups), init_mo))
 
-# Totally dynamic
-lr_mean  = torch.FloatTensor(np.full((1, n_groups), init_lr))
-mo_mean  = torch.FloatTensor(np.full((1, n_groups), init_mo))
-lr_res   = torch.FloatTensor(np.full((num_iters, n_groups), 0.0))
-mo_res   = torch.FloatTensor(np.full((num_iters, n_groups), 0.0))
+# # Totally dynamic
+# lr_mean  = torch.FloatTensor(np.full((1, n_groups), init_lr))
+# mo_mean  = torch.FloatTensor(np.full((1, n_groups), init_mo))
+# lr_res   = torch.FloatTensor(np.full((num_iters, n_groups), 0.0))
+# mo_res   = torch.FloatTensor(np.full((num_iters, n_groups), 0.0))
 
 # --
 # Run
@@ -113,18 +100,20 @@ set_seeds(seed)
 
 hparams = {
     "lr_mean" : lr_mean,
-    "lr_res"  : lr_res,
+    # "lr_res"  : lr_res,
     "mo_mean" : mo_mean,
-    "mo_res"  : mo_res,
-    "alpha"   : alpha
+    # "mo_res"  : mo_res,
+    "alpha"   : alpha,
 }
 
 for k,v in hparams.items():
     hparams[k] = v.cuda().requires_grad_()
 
-hopt = torch.optim.Adam(
-    params=hparams.values(),
+hopt = torch.optim.SGD(
+    # params=hparams.values(),
+    params=[hparams['alpha']],
     lr=hyper_lr,
+    # momentum=0.9,
 )
 
 hist = defaultdict(list)
@@ -135,16 +124,16 @@ for meta_iter in range(0, meta_iters):
     # Transform hyperparameters
     
     # Fixed, same for all layers
-    # lrs = torch.clamp(hparams['lr_mean'].repeat(num_iters, n_groups), 0.001, 10.0)
-    # mos = torch.clamp(hparams['mo_mean'].repeat(num_iters, n_groups), 0.001, 0.999)
+    lrs = torch.clamp(hparams['lr_mean'].repeat(num_iters, n_groups), 0.001, 10.0)
+    mos = torch.clamp(hparams['mo_mean'].repeat(num_iters, n_groups), 0.001, 0.999)
     
-    # Fixed, per layer
+    # # Fixed, per layer
     # lrs = torch.clamp(hparams['lr_mean'].repeat(num_iters, 1), 0.001, 10.0)
     # mos = torch.clamp(hparams['mo_mean'].repeat(num_iters, 1), 0.001, 0.999)
     
-    # Totally learned
-    lrs = torch.clamp(hparams['lr_mean'] + hparams['lr_res'], 0.001, 10.0)
-    mos = torch.clamp(hparams['mo_mean'] + hparams['mo_res'], 0.001, 0.999)
+    # # Totally learned
+    # lrs = torch.clamp(hparams['lr_mean'] + hparams['lr_res'], 0.001, 10.0)
+    # mos = torch.clamp(hparams['mo_mean'] + hparams['mo_res'], 0.001, 0.999)
     
     # --
     # Hyperstep
@@ -167,16 +156,23 @@ for meta_iter in range(0, meta_iters):
         batch_size=batch_size,
         seed=0 if fix_data else meta_iter,
         verbose=verbose,
+        loss_fn=F.mse_loss,
     )
     train_hist, val_acc, test_acc = hlayer.run(
         X_train=X_train,
-        y_train=y_train, 
+        y_train=y_train.zero_().float(), 
         X_valid=X_valid,
-        y_valid=y_valid,
+        y_valid=y_valid.zero_().float(),
         X_test=X_test,
-        y_test=y_test,
+        y_test=y_test.zero_().float(),
     )
     _ = hopt.step()
+    
+    # >>
+    # print('alpha', float(hparams['alpha']))
+    # print('beta', float(net.beta))
+    # print('lr', float(hparams['lr_mean']))
+    # <<
     
     # --
     # Logging
@@ -198,22 +194,23 @@ for meta_iter in range(0, meta_iters):
 # --
 # Plot results
 
-_ = plt.plot([float(h['alpha']) for h in hist['hparams']])
-_ = plt.plot([float(h['lr_mean'][0][0]) for h in hist['hparams']])
-_ = plt.plot([float(h['mo_mean'][0][0]) for h in hist['hparams']])
-show_plot()
+# _ = plt.plot([float(h['alpha']) for h in hist['hparams']], label='alpha')
+# _ = plt.plot([float(h['lr_mean'][0][0]) for h in hist['hparams']], label='lr_mean')
+# _ = plt.plot([float(h['mo_mean'][0][0]) for h in hist['hparams']], label='mo_mean')
+# _ = plt.legend(fontsize=8)
+# show_plot()
 
-_ = plt.plot(hist['val_acc'], label='val_acc')
-_ = plt.plot(hist['test_acc'], label='test_acc')
-_ = plt.legend()
-show_plot()
+# _ = plt.plot(hist['val_acc'], label='val_acc')
+# _ = plt.plot(hist['test_acc'], label='test_acc')
+# _ = plt.legend()
+# show_plot()
 
 
-param_names = [k[0] for k in net.named_parameters()]
-for i, lr in enumerate(to_numpy(mos).T):
-    if 'weight' in param_names[i]:
-        _ = plt.plot(lr, label=param_names[i])
+# # param_names = [k[0] for k in net.named_parameters()]
+# # for i, lr in enumerate(to_numpy(mos).T):
+# #     if 'weight' in param_names[i]:
+# #         _ = plt.plot(lr, label=param_names[i])
 
-_ = plt.legend(fontsize=8)
-show_plot()
+# # _ = plt.legend(fontsize=8)
+# # show_plot()
 
