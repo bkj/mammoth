@@ -21,6 +21,7 @@ sys.path.append('../mammoth')
 from mammoth.utils import load_data
 from mammoth.helpers import to_numpy, set_seeds
 from mammoth.hyperlayer import HyperLayer
+from mammoth.optim import LambdaAdam
 
 # torch.set_default_tensor_type('torch.DoubleTensor')
 
@@ -52,7 +53,7 @@ verbose    = False
 
 
 seed       = 345
-hyper_lr   = 0.02
+hyper_lr   = 0.04
 init_lr    = 0.1
 init_mo    = 0.5
 fix_init   = True
@@ -84,10 +85,11 @@ hparams = {
 for k,v in hparams.items():
     hparams[k] = v.requires_grad_()
 
-hopt = torch.optim.Adam(
+hopt = LambdaAdam(
     params=hparams.values(),
     lr=hyper_lr,
     betas=(0.9, 0.99),
+    lam=1e-4,
 )
 
 hist = defaultdict(list)
@@ -155,25 +157,25 @@ for meta_iter in range(0, meta_iters):
     sys.stdout.flush()
 
 # --
-# Plot results
+# # Plot results
 
-_ = plt.plot([float(h['meta']) for h in hist['hparams']], label='alpha')
-_ = plt.plot([float(h['lr_mean'][0][0]) for h in hist['hparams']], label='lr_mean')
-_ = plt.plot([float(h['mo_mean'][0][0]) for h in hist['hparams']], label='mo_mean')
-_ = plt.legend(fontsize=8)
-show_plot()
+# _ = plt.plot([float(h['meta']) for h in hist['hparams']], label='alpha')
+# _ = plt.plot([float(h['lr_mean'][0][0]) for h in hist['hparams']], label='lr_mean')
+# _ = plt.plot([float(h['mo_mean'][0][0]) for h in hist['hparams']], label='mo_mean')
+# _ = plt.legend(fontsize=8)
+# show_plot()
 
-_ = plt.plot(hist['val_acc'], label='val_acc')
-_ = plt.plot(hist['test_acc'], label='test_acc')
-_ = plt.legend()
-show_plot()
+# _ = plt.plot(hist['val_acc'], label='val_acc')
+# _ = plt.plot(hist['test_acc'], label='test_acc')
+# _ = plt.legend()
+# show_plot()
 
 
-# # param_names = [k[0] for k in net.named_parameters()]
-# # for i, lr in enumerate(to_numpy(mos).T):
-# #     if 'weight' in param_names[i]:
-# #         _ = plt.plot(lr, label=param_names[i])
+# # # param_names = [k[0] for k in net.named_parameters()]
+# # # for i, lr in enumerate(to_numpy(mos).T):
+# # #     if 'weight' in param_names[i]:
+# # #         _ = plt.plot(lr, label=param_names[i])
 
-# # _ = plt.legend(fontsize=8)
-# # show_plot()
+# # # _ = plt.legend(fontsize=8)
+# # # show_plot()
 
