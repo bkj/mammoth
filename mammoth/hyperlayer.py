@@ -86,8 +86,8 @@ class HyperLayer(nn.Module):
         )
         
         # Compute performance
-        val_acc  = self._validate(X=X_valid, y=y_valid)
-        test_acc = self._validate(X=X_test, y=y_test) if 'X_test' in data else None
+        val_acc  = self._validate(X=X_valid, y=y_valid, mode=mode)
+        test_acc = self._validate(X=X_test, y=y_test, mode=mode) if 'X_test' in data else None
         
         # Save trained state
         if not forward_only:
@@ -107,7 +107,7 @@ class HyperLayer(nn.Module):
             # Check that we've returned to _exactly_ correct location
             if check_perfect:
                 untrained_weights = self.opt._get_flat_params()
-                # assert (orig_weights == untrained_weights).all(), 'meta_iter: orig_weights != untrained_weights'
+                assert (orig_weights == untrained_weights).all(), 'meta_iter: orig_weights != untrained_weights'
             
             # Set weights to trained values
             if not untrain:
@@ -151,25 +151,31 @@ class HyperLayer(nn.Module):
     
     def _validate(self, X=None, y=None, logits=None, mode='one_batch'):
         if logits is None:
-            if mode == 'one_batch':
-                logits = self.net(X)
-                preds = logits.max(dim=1)[1]
-                acc = (preds == y).float().mean()
-                return float(acc)
-            elif mode == 'multi_batch':
-                raise Exception
-                # correct, total = 0.0, 0.0
-                # for Xb, yb in zip(torch.split(X, 10), torch.split(y, 10)):
-                #     logits = self.net(Xb)
-                #     preds = logits.max(dim=1)[1]
-                #     correct += (preds == yb).float().sum()
-                #     total += preds.shape[0]
+            logits = self.net(X)
+        
+        return float(logits.mean())
+        
+        # if logits is None:
+        #     if mode == 'one_batch':
+        #         logits = self.net(X)
+        #         preds = logits.max(dim=1)[1]
+        #         acc = (preds == y).float().mean()
+        #         return float(acc)
+        #     elif mode in set(['sample']):
+        #         correct, total = 0.0, 0.0
+        #         for Xb, yb in zip(torch.split(X, 10), torch.split(y, 10)):
+        #             logits = self.net(Xb)
+        #             preds = logits.max(dim=1)[1]
+        #             correct += (preds == yb).float().sum()
+        #             total += preds.shape[0]
                 
-                # return float(correct) / total
-        else:
-            preds = logits.max(dim=1)[1]
-            acc = (preds == y).float().mean()
-            return float(acc)
+        #         return float(correct) / total
+        #     else:
+        #         raise Exception
+        # else:
+        #     preds = logits.max(dim=1)[1]
+        #     acc = (preds == y).float().mean()
+        #     return float(acc)
     
     def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size, mode='one_batch'):
         _ = self.opt.zero_grad()
@@ -178,15 +184,15 @@ class HyperLayer(nn.Module):
         if mode == 'one_batch':
             lf_init = lambda: self.loss_fn(self.net(X_valid), y_valid)
             self.opt.init_backward(lf_init=lf_init)
+        elif mode == 'sample':
+            idx = torch.randperm(X_valid.shape[0])[:300]
+            # idx = torch.arange(300).long()
+            lf_init = lambda: self.loss_fn(self.net(X_valid[idx]), y_valid[idx])
+            self.opt.init_backward(lf_init=lf_init)
         else:
             raise Exception
         
-        # Random batch
-        # idx = torch.randperm(X_valid.shape[0])[:300]
-        # idx = torch.arange(300).long()
-        # lf_init = lambda: self.loss_fn(self.net(X_valid[idx]), y_valid[idx])
-        # self.opt.init_backward(lf_init=lf_init)
-        
+        # Chunked
         # def precompute_lf_init():
         #     n = 0
         #     for Xb, yb in zip(torch.split(X_valid, 10), torch.split(y_valid, 10)):

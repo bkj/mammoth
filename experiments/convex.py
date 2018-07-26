@@ -49,7 +49,7 @@ class Net(nn.Module):
 # --
 # Parameters
 
-num_iters  = 2
+num_iters  = 10
 batch_size = 1
 verbose    = False
 
@@ -59,7 +59,7 @@ init_lr    = 0.1
 init_mo    = 0.5
 fix_init   = True
 fix_data   = True
-meta_iters = 2
+meta_iters = 100
 
 
 # --
@@ -128,13 +128,15 @@ for meta_iter in range(0, meta_iters):
         loss_fn=F.l1_loss,
     )
     train_hist, val_acc, test_acc = hlayer.run(
-        X_train=torch.zeros(1000),
-        y_train=torch.zeros(1000), 
-        X_valid=torch.zeros(1000),
-        y_valid=torch.zeros(1000),
-        learn_lrs=True,
-        learn_mos=True,
-        learn_meta=False,
+        data = {
+            "X_train" : torch.zeros(1000),
+            "y_train" : torch.zeros(1000), 
+            "X_valid" : torch.zeros(1000),
+            "y_valid" : torch.zeros(1000),
+        },
+        learn_lrs=False,
+        learn_mos=False,
+        learn_meta=True,
         learn_init=False,
     )
     _ = hopt.step()
