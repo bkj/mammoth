@@ -8,6 +8,7 @@ import os
 import sys
 import json
 import numpy as np
+from time import time
 from collections import defaultdict
 from sklearn.model_selection import train_test_split
 
@@ -25,9 +26,6 @@ from mammoth.utils import load_data
 from mammoth.helpers import to_numpy, set_seeds
 from mammoth.hyperlayer import HyperLayer
 from mammoth.optim import LambdaAdam
-
-torch.backends.cudnn.benchmark = True
-torch.backends.cudnn.deterministic = True
 
 seed = 123
 set_seeds(seed)
@@ -66,12 +64,22 @@ if not os.path.exists('./data/prepped_mnist'):
     torch.save((X_train, X_valid, X_test, y_train, y_valid, y_test), './data/prepped_mnist')
 
 
-X_train, X_valid, X_test, y_train, y_valid, y_test = [x.cuda() for x in torch.load('./data/prepped_mnist')]
-X_train, X_valid, X_test = X_train.float(), X_valid.float(), X_test.float()
-y_train, y_valid, y_test = y_train.long(), y_valid.long(), y_test.long()
+X_train_, X_valid_, X_test_, y_train_, y_valid_, y_test_ = torch.load('./data/prepped_mnist')
 
-assert X_train.mean() < 1e-6
-assert (X_train.std() - 1).abs() < 1e-6
+data = {
+    "X_train" : torch.FloatTensor(X_train_),
+    "y_train" : torch.LongTensor(y_train_),
+    "X_valid" : torch.FloatTensor(X_valid_),
+    "y_valid" : torch.LongTensor(y_valid_),
+    "X_test"  : torch.FloatTensor(X_test_),
+    "y_test"  : torch.LongTensor(y_test_),
+}
+
+for k,v in data.items():
+    data[k] = v.cuda()
+
+assert data['X_train'].mean() < 1e-3
+assert (1 - data['X_train'].std()).abs() < 1e-3
 
 # --
 # Helpers
@@ -105,11 +113,11 @@ class Net(nn.Module):
 
 num_iters  = 100
 batch_size = 100
-verbose    = True
+verbose    = False
 hyper_lr   = 0.05
 init_lr    = -1
 init_mo    = -1
-meta_iters = 20
+meta_iters = 10
 
 # --
 # Run
@@ -118,8 +126,8 @@ set_seeds(seed + 1)
 
 n_groups = len(list(Net().parameters()))
 hparams = {
-    "lr"  : torch.FloatTensor(np.full((num_iters, n_groups), init_lr)),
-    "mo"  : torch.FloatTensor(np.full((num_iters, n_groups), init_mo)),
+    "lr" : torch.FloatTensor(np.full((num_iters, n_groups), init_lr)),
+    "mo" : torch.FloatTensor(np.full((num_iters, n_groups), init_mo)),
 }
 
 for k,v in hparams.items():
@@ -131,6 +139,7 @@ hopt = LambdaAdam(
     lam=1,
 )
 
+t = time()
 hist = defaultdict(list)
 for meta_iter in range(0, meta_iters):
     
@@ -151,12 +160,7 @@ for meta_iter in range(0, meta_iters):
         verbose=verbose,
     )
     train_hist, val_acc, test_acc = hlayer.run(
-        X_train=X_train,
-        y_train=y_train, 
-        X_valid=X_valid,
-        y_valid=y_valid,
-        X_test=X_test,
-        y_test=y_test,
+        data=data,
         learn_lrs=True,
         learn_mos=True,
         learn_meta=False,
@@ -176,6 +180,7 @@ for meta_iter in range(0, meta_iters):
         "train_acc" : float(np.mean([t['acc'] for t in train_hist[-10:]])),
         "val_acc"   : val_acc,
         "test_acc"  : test_acc,
+        "time"      : time() - t,
     }))
     sys.stdout.flush()
 
@@ -183,13 +188,13 @@ for meta_iter in range(0, meta_iters):
 # --
 # Plot results
 
-_ = plt.plot(hist['val_acc'], label='val_acc')
-_ = plt.plot(hist['test_acc'], label='test_acc')
-_ = plt.legend()
-show_plot()
+# _ = plt.plot(hist['val_acc'], label='val_acc')
+# _ = plt.plot(hist['test_acc'], label='test_acc')
+# _ = plt.legend()
+# show_plot()
 
-for lr in to_numpy(10 ** hparams['lr']).T:
-    _ = plt.plot(lr)
+# for lr in to_numpy(10 ** hparams['lr']).T:
+#     _ = plt.plot(lr)
 
-show_plot()
+# show_plot()
 

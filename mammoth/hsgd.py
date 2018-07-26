@@ -14,6 +14,9 @@ from torch.optim.optimizer import Optimizer
 from .helpers import to_numpy
 from .exact_reps import ETensor_torch as ETensor
 
+torch.backends.cudnn.benchmark = True
+torch.backends.cudnn.deterministic = True
+
 class HSGD():
     def __init__(self, params, hparams, szs=None, learn_lrs=True, learn_mos=True, learn_meta=True):
         """
@@ -139,7 +142,6 @@ class HSGD():
             self.d_mos[sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
         
         # Weight gradient
-        g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
         lf_hvp = (g * ((1 - mo) * self.d_v)).sum()
         self.d_x -= self._flatten(autograd.grad(lf_hvp, self.params, retain_graph=True)).data
         

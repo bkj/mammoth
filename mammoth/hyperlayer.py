@@ -50,10 +50,17 @@ class HyperLayer(nn.Module):
         
         assert len(self.params) > 0, "HyperLayer.__init__: len(params) == 0"
     
-    def run(self, 
-        X_train, y_train, X_valid, y_valid, X_test=None, y_test=None,
+    def run(self, data,
         learn_lrs=True, learn_mos=True, learn_meta=True, learn_init=False,
-        szs=None, untrain=False, check_perfect=True, forward_only=False):
+        szs=None, untrain=False, check_perfect=True, forward_only=False, mode='one_batch'):
+        
+        X_train = data['X_train']
+        y_train = data['y_train']
+        X_valid = data['X_valid']
+        y_valid = data['y_valid']
+        if 'X_test' in data:
+            X_test = data['X_test']
+            y_test = data['y_test']
         
         if learn_init:
             assert untrain, "learn_init and not untrain"
@@ -80,7 +87,7 @@ class HyperLayer(nn.Module):
         
         # Compute performance
         val_acc  = self._validate(X=X_valid, y=y_valid)
-        test_acc = self._validate(X=X_test, y=y_test) if X_test is not None else None
+        test_acc = self._validate(X=X_test, y=y_test) if 'X_test' in data else None
         
         # Save trained state
         if not forward_only:
@@ -94,12 +101,13 @@ class HyperLayer(nn.Module):
                 y_valid=y_valid, 
                 num_iters=self.num_iters,
                 batch_size=self.batch_size,
+                mode=mode,
             )
             
             # Check that we've returned to _exactly_ correct location
             if check_perfect:
                 untrained_weights = self.opt._get_flat_params()
-                assert (orig_weights == untrained_weights).all(), 'meta_iter: orig_weights != untrained_weights'
+                # assert (orig_weights == untrained_weights).all(), 'meta_iter: orig_weights != untrained_weights'
             
             # Set weights to trained values
             if not untrain:
@@ -141,33 +149,43 @@ class HyperLayer(nn.Module):
         
         return hist
     
-    def _validate(self, X=None, y=None, logits=None):
+    def _validate(self, X=None, y=None, logits=None, mode='one_batch'):
         if logits is None:
-            correct, total = 0.0, 0.0
-            for Xb, yb in zip(torch.split(X, 10), torch.split(y, 10)):
-                logits = self.net(Xb)
+            if mode == 'one_batch':
+                logits = self.net(X)
                 preds = logits.max(dim=1)[1]
-                correct += (preds == yb).float().sum()
-                total += preds.shape[0]
-            
-            return float(correct) / total
+                acc = (preds == y).float().mean()
+                return float(acc)
+            elif mode == 'multi_batch':
+                raise Exception
+                # correct, total = 0.0, 0.0
+                # for Xb, yb in zip(torch.split(X, 10), torch.split(y, 10)):
+                #     logits = self.net(Xb)
+                #     preds = logits.max(dim=1)[1]
+                #     correct += (preds == yb).float().sum()
+                #     total += preds.shape[0]
+                
+                # return float(correct) / total
         else:
             preds = logits.max(dim=1)[1]
             acc = (preds == y).float().mean()
             return float(acc)
     
-    def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size):
+    def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size, mode='one_batch'):
         _ = self.opt.zero_grad()
         
-        # # One batch, all valid data
-        # lf_init = lambda: self.loss_fn(self.net(X_valid), y_valid)
-        # self.opt.init_backward(lf_init=lf_init)
+        # One batch, all valid data
+        if mode == 'one_batch':
+            lf_init = lambda: self.loss_fn(self.net(X_valid), y_valid)
+            self.opt.init_backward(lf_init=lf_init)
+        else:
+            raise Exception
         
         # Random batch
         # idx = torch.randperm(X_valid.shape[0])[:300]
-        idx = torch.arange(300).long()
-        lf_init = lambda: self.loss_fn(self.net(X_valid[idx]), y_valid[idx])
-        self.opt.init_backward(lf_init=lf_init)
+        # idx = torch.arange(300).long()
+        # lf_init = lambda: self.loss_fn(self.net(X_valid[idx]), y_valid[idx])
+        # self.opt.init_backward(lf_init=lf_init)
         
         # def precompute_lf_init():
         #     n = 0
