@@ -134,23 +134,23 @@ class HSGD():
         g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
         _ = self.eV.add((1 - mo) * g.data).unmul(mo)
         
-        self.d_v += self.d_x * lr
+        # self.d_v += self.d_x * lr
         
-        # Update mo
-        if self.learn_mos:
-            tmp = self.d_v * (self.eV.val + g.data)
-            self.d_mos[sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
+        # # Update mo
+        # if self.learn_mos:
+        #     tmp = self.d_v * (self.eV.val + g.data)
+        #     self.d_mos[sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
         
-        # Weight gradient
-        lf_hvp = (g * ((1 - mo) * self.d_v)).sum()
-        self.d_x -= self._flatten(autograd.grad(lf_hvp, self.params, retain_graph=True)).data
+        # # Weight gradient
+        # lf_hvp = (g * ((1 - mo) * self.d_v)).sum()
+        # self.d_x -= self._flatten(autograd.grad(lf_hvp, self.params, retain_graph=True)).data
         
-        # Meta gradient
-        if self.learn_meta:
-            d_meta_update = self._flatten(autograd.grad(lf_hvp, self.meta)).data
-            self.d_meta -= d_meta_update
+        # # Meta gradient
+        # if self.learn_meta:
+        #     d_meta_update = self._flatten(autograd.grad(lf_hvp, self.meta)).data
+        #     self.d_meta -= d_meta_update
         
-        self.d_v *= mo
+        # self.d_v *= mo
     
     def get_init_params_grad(self):
         offset = 0
