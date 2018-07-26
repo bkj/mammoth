@@ -117,13 +117,6 @@ class HSGD():
         
         self.backward_ready = True
     
-    def _second_derivative(self, out, params, exact=True, **kwargs):
-        if exact:
-            gg = autograd.grad(out, params, **kwargs)
-        else:
-            raise Exception
-        return self._flatten(gg)
-    
     def unstep(self, lf, sgd_iter):
         assert self.backward_ready, 'backward_ready = False'
         
@@ -136,6 +129,7 @@ class HSGD():
             self.d_lrs[sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
         
         # Reverse SGD exactly
+        # !! This is the only bit necessary for exact reversal
         _ = self.eX.sub(lr * self.eV.val)
         _ = self._set_flat_params(self.eX.val)
         g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
@@ -149,14 +143,12 @@ class HSGD():
             self.d_mos[sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
         
         # Weight gradient
-        
         lf_hvp = torch.dot(g, ((1 - mo) * self.d_v))
-        self.d_x -= self._second_derivative(lf_hvp, self.params, retain_graph=True).data
+        self.d_x -= self._flatten(autograd.grad(lf_hvp, self.params, retain_graph=True)).data
         
         # Meta gradient
         if self.learn_meta:
-            # self.d_meta -= self._flatten(autograd.grad(lf_hvp, self.meta)).data
-            self.d_meta -= self._second_derivative(lf_hvp, self.meta).data
+            self.d_meta -= self._flatten(autograd.grad(lf_hvp, self.meta)).data
         
         self.d_v *= mo
     

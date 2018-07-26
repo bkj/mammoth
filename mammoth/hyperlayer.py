@@ -28,10 +28,6 @@ def zero_grad(p):
         if p.grad is not None:
             p.grad.zero_()
 
-def zero_backward(p, g):
-    zero_grad(p)
-    p.backward(g)
-
 
 class HyperLayer(nn.Module):
     def __init__(self, net, params, hparams, 
@@ -53,6 +49,8 @@ class HyperLayer(nn.Module):
     def run(self, data,
         learn_lrs=True, learn_mos=True, learn_meta=True, learn_init=False,
         szs=None, untrain=False, check_perfect=True, forward_only=False, mode='one_batch'):
+        
+        _ = self.net.train()
         
         X_train = data['X_train']
         y_train = data['y_train']
@@ -86,8 +84,10 @@ class HyperLayer(nn.Module):
         )
         
         # Compute performance
+        _ = self.net.eval()
         val_acc  = self._validate(X=X_valid, y=y_valid, mode=mode)
         test_acc = self._validate(X=X_test, y=y_test, mode=mode) if 'X_test' in data else None
+        _ = self.net.train()
         
         # Save trained state
         if not forward_only:
@@ -117,11 +117,12 @@ class HyperLayer(nn.Module):
             zero_grad(self.hparams['lrs'])
             zero_grad(self.hparams['mos'])
             zero_grad(self.hparams['meta'])
+            _ = [zero_grad(p) for p in self.params]
             
             if learn_lrs:  self.hparams['lrs'].backward(self.opt.d_lrs)
             if learn_mos:  self.hparams['mos'].backward(self.opt.d_mos)
             if learn_meta: self.hparams['meta'].backward(self.opt.d_meta)
-            if learn_init: [zero_backward(p, g) for p,g in zip(self.params, self.opt.get_init_params_grad())]
+            if learn_init: [p.backward(g) for p,g in zip(self.params, self.opt.get_init_params_grad())]
         else:
             print('Hyperlayer.run: forward_only', file=sys.stderr)
         
@@ -150,32 +151,32 @@ class HyperLayer(nn.Module):
         return hist
     
     def _validate(self, X=None, y=None, logits=None, mode='one_batch'):
-        if logits is None:
-            logits = self.net(X)
-        
-        return float(logits.mean())
-        
         # if logits is None:
-        #     if mode == 'one_batch':
-        #         logits = self.net(X)
-        #         preds = logits.max(dim=1)[1]
-        #         acc = (preds == y).float().mean()
-        #         return float(acc)
-        #     elif mode in set(['sample']):
-        #         correct, total = 0.0, 0.0
-        #         for Xb, yb in zip(torch.split(X, 10), torch.split(y, 10)):
-        #             logits = self.net(Xb)
-        #             preds = logits.max(dim=1)[1]
-        #             correct += (preds == yb).float().sum()
-        #             total += preds.shape[0]
+        #     logits = self.net(X)
+        
+        # return float(logits.mean())
+        
+        if logits is None:
+            if mode == 'one_batch':
+                logits = self.net(X)
+                preds = logits.max(dim=1)[1]
+                acc = (preds == y).float().mean()
+                return float(acc)
+            elif mode in set(['sample']):
+                correct, total = 0.0, 0.0
+                for Xb, yb in zip(torch.split(X, 10), torch.split(y, 10)):
+                    logits = self.net(Xb)
+                    preds = logits.max(dim=1)[1]
+                    correct += (preds == yb).float().sum()
+                    total += preds.shape[0]
                 
-        #         return float(correct) / total
-        #     else:
-        #         raise Exception
-        # else:
-        #     preds = logits.max(dim=1)[1]
-        #     acc = (preds == y).float().mean()
-        #     return float(acc)
+                return float(correct) / total
+            else:
+                raise Exception
+        else:
+            preds = logits.max(dim=1)[1]
+            acc = (preds == y).float().mean()
+            return float(acc)
     
     def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size, mode='one_batch'):
         _ = self.opt.zero_grad()
@@ -186,7 +187,6 @@ class HyperLayer(nn.Module):
             self.opt.init_backward(lf_init=lf_init)
         elif mode == 'sample':
             idx = torch.randperm(X_valid.shape[0])[:300]
-            # idx = torch.arange(300).long()
             lf_init = lambda: self.loss_fn(self.net(X_valid[idx]), y_valid[idx])
             self.opt.init_backward(lf_init=lf_init)
         else:
