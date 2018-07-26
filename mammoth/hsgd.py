@@ -98,11 +98,19 @@ class HSGD():
         _ = self.eX.add(lr * self.eV.val)
         _ = self._set_flat_params(self.eX.val)
     
-    def init_backward(self, lf_init):
+    def init_backward(self, lf_init=None, grad=False, n=0):
         assert self.forward_ready, 'cannot init_backward before calling HSGD.step'
-        self.d_x = self._flatten(autograd.grad(lf_init(), self.params)).data
-        if self.learn_meta:
-            self.d_meta = self._flatten(autograd.grad(lf_init(), self.meta)).data
+        if lf_init is not None:
+            self.d_x = self._flatten(autograd.grad(lf_init(), self.params)).data
+            if self.learn_meta:
+                self.d_meta = self._flatten(autograd.grad(lf_init(), self.meta)).data
+        else:
+            raise Exception
+            # assert n > 0
+            # self.d_x = self._flatten([p.grad for p in self.params]).data / n
+            # if self.learn_meta:
+            #     print(self.meta)
+            #     self.d_meta = self._flatten([p.grad for p in self.meta]).data / n
         
         self.backward_ready = True
         
@@ -137,8 +145,9 @@ class HSGD():
         
         # Meta gradient
         if self.learn_meta:
-            self.d_meta -= self._flatten(autograd.grad(lf_hvp, self.meta)).data
-            
+            d_meta_update = self._flatten(autograd.grad(lf_hvp, self.meta)).data
+            self.d_meta -= d_meta_update
+        
         self.d_v *= mo
     
     def get_init_params_grad(self):

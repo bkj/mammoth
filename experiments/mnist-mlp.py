@@ -1,15 +1,13 @@
 #!/usr/bin/env python
 
 """
-    main.py
     
-    Example of running per-step learning rate and momentum tuning
-    on a toy MNIST network
 """
 
 import sys
 import json
 import numpy as np
+from time import time
 from collections import defaultdict
 
 import torch
@@ -23,14 +21,13 @@ sys.path.append('../mammoth')
 from mammoth.utils import load_data
 from mammoth.helpers import to_numpy, set_seeds
 from mammoth.hyperlayer import HyperLayer
-
-torch.backends.cudnn.benchmark = True
-torch.backends.cudnn.deterministic = True
+from mammoth.optim import LambdaAdam
 
 # --
 # IO
 
-set_seeds(123)
+seed = 345
+set_seeds(seed)
 
 X_train, X_valid, X_test, y_train, y_valid, y_test = load_data()
 
@@ -42,14 +39,17 @@ y_train = torch.LongTensor(y_train).cuda()
 y_valid = torch.LongTensor(y_valid).cuda()
 y_test  = torch.LongTensor(y_test).cuda()
 
+assert X_train.mean() < 1e-3
+assert (1 - X_train.std()).abs() < 1e-3
+
 # --
 # Helpers
 
 class Net(nn.Module):
-    def __init__(self, layers=[50, 50, 50]):
+    def __init__(self, layers=[256, 64, 32]):
         super().__init__()
         
-        self.layers = nn.Sequential(
+        self.layers1 = nn.Sequential(
             nn.Linear(784, layers[0]),
             nn.Tanh(),
             nn.Linear(layers[0], layers[1]),
@@ -60,71 +60,60 @@ class Net(nn.Module):
         )
     
     def forward(self, x):
-        return self.layers(x)
+        return self.layers1(x)
 
 
 # --
 # Parameters
 
-num_iters  = 200
-batch_size = 200
-
-seed       = 345
+num_iters  = 100
+batch_size = 100
+verbose    = False
 hyper_lr   = 0.01
-init_lr    = 0.30
-init_mo    = 0.50
-fix_init   = False
-fix_data   = False
+init_lr    = 0.1
+init_mo    = 0.5
 meta_iters = 20
-
-# --
-# Parameterize learning rates + momentum
-
-n_groups = len(list(Net().parameters()))
-
-lr_mean = torch.tensor(np.full((1, n_groups), init_lr)).cuda().requires_grad_()
-lr_res  = torch.tensor(np.full((num_iters, n_groups), 0.0)).cuda().requires_grad_()
-
-mo_mean = torch.tensor(np.full((1, n_groups), init_mo)).cuda().requires_grad_()
-mo_res  = torch.tensor(np.full((num_iters, n_groups), 0.0)).cuda().requires_grad_()
-
-# --
-# Hyper-optimizer
 
 # --
 # Run
 
 set_seeds(seed)
 
-hparams = [lr_mean, lr_res, mo_mean, mo_res]
-hopt = torch.optim.Adam(
-    params=hparams, 
-    lr=hyper_lr
+n_groups = len(list(Net().parameters()))
+
+hparams = {
+    "lr" : torch.FloatTensor(np.full((num_iters, n_groups), init_lr)),
+    "mo" : torch.FloatTensor(np.full((num_iters, n_groups), init_mo)),
+}
+
+for k,v in hparams.items():
+    hparams[k] = v.cuda().requires_grad_()
+
+hopt = LambdaAdam(
+    params=hparams.values(),
+    lr=hyper_lr,
+    lam=1,
 )
 
 hist = defaultdict(list)
+t = time()
 for meta_iter in range(0, meta_iters):
-    
-    # --
-    # Transform hyperparameters
-    
-    lrs = torch.clamp(lr_mean + lr_res, 0.001, 10.0)
-    mos = torch.clamp(mo_mean + mo_res, 0.001, 0.999)
-    
-    # --
-    # Hyperstep
-    
-    if fix_init:
-        set_seeds(seed)
     
     net = Net().cuda()
     
     _ = hopt.zero_grad()
     hlayer = HyperLayer(
         net=net, 
+        hparams={
+            "lrs"  : hparams['lr'].clamp(min=0),
+            "mos"  : hparams['mo'].clamp(min=0, max=1),
+            "meta" : None,
+        },
+        params=net.parameters(),
         num_iters=num_iters, 
         batch_size=batch_size,
-        seed=0 if fix_data else meta_iter
+        seed=seed + meta_iter,
+        verbose=verbose,
     )
     train_hist, val_acc, test_acc = hlayer.run(
         X_train=X_train,
@@ -133,10 +122,10 @@ for meta_iter in range(0, meta_iters):
         y_valid=y_valid,
         X_test=X_test,
         y_test=y_test,
-        
-        lrs=lrs,
-        mos=mos,
-        mts=None,
+        learn_lrs=True,
+        learn_mos=True,
+        learn_meta=False,
+        forward_only=False,
     )
     _ = hopt.step()
     
@@ -146,26 +135,35 @@ for meta_iter in range(0, meta_iters):
     hist['train_hist'].append(train_hist)
     hist['val_acc'].append(val_acc)
     hist['test_acc'].append(test_acc)
+    hist['hparams'].append({k:to_numpy(v.clone()) for k,v in hparams.items()})
     
     print(json.dumps({
         "meta_iter" : meta_iter,
         "train_acc" : float(np.mean([t['acc'] for t in train_hist[-10:]])),
         "val_acc"   : val_acc,
         "test_acc"  : test_acc,
+        "time"      : time() - t,
     }))
     sys.stdout.flush()
 
-
 # --
 # Plot results
+
+_ = plt.plot([float(h['lr'][0][0]) for h in hist['hparams']], label='lr')
+_ = plt.plot([float(h['mo'][0][0]) for h in hist['hparams']], label='mo')
+_ = plt.legend()
+show_plot()
 
 _ = plt.plot(hist['val_acc'], label='val_acc')
 _ = plt.plot(hist['test_acc'], label='test_acc')
 _ = plt.legend()
 show_plot()
 
-# for lr in to_numpy(lrs).T:
-#     _ = plt.plot(lr)
+param_names = [k[0] for k in net.named_parameters()]
+for i, lr in enumerate(to_numpy(lrs).T):
+    if 'weight' in param_names[i]:
+        _ = plt.plot(lr, label=param_names[i])
 
-# show_plot()
+_ = plt.legend(fontsize=8)
+show_plot()
 

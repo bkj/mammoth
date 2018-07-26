@@ -152,19 +152,34 @@ class HyperLayer(nn.Module):
             
             return float(correct) / total
         else:
-            # >>
             preds = logits.max(dim=1)[1]
             acc = (preds == y).float().mean()
             return float(acc)
-        # --
-        # return float(logits.mean())
-        # <<
     
     def _untrain(self, X_train, y_train, X_valid, y_valid, num_iters, batch_size):
         _ = self.opt.zero_grad()
         
-        lf_init = lambda: self.loss_fn(self.net(X_valid), y_valid)
-        self.opt.init_backward(lf_init)
+        # # One batch, all valid data
+        # lf_init = lambda: self.loss_fn(self.net(X_valid), y_valid)
+        # self.opt.init_backward(lf_init=lf_init)
+        
+        # Random batch
+        # idx = torch.randperm(X_valid.shape[0])[:300]
+        idx = torch.arange(300).long()
+        lf_init = lambda: self.loss_fn(self.net(X_valid[idx]), y_valid[idx])
+        self.opt.init_backward(lf_init=lf_init)
+        
+        # def precompute_lf_init():
+        #     n = 0
+        #     for Xb, yb in zip(torch.split(X_valid, 10), torch.split(y_valid, 10)):
+        #         loss = self.loss_fn(self.net(Xb), yb, size_average=False)
+        #         loss.backward()
+        #         n += Xb.shape[0]
+            
+        #     return n
+        
+        # n = precompute_lf_init()
+        # self.opt.init_backward(grad=True, n=n)
         
         # Run backward
         gen = range(num_iters)[::-1]
