@@ -28,15 +28,18 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # --
 # Helpers
 
+def _calc_nb(y_i, x, y):
+    x = x.sign()
+    p = x[np.argwhere(y == y_i)[:,0]].sum(axis=0) + 1
+    q = x[np.argwhere(y != y_i)[:,0]].sum(axis=0) + 1
+    p, q = np.asarray(p).squeeze(), np.asarray(q).squeeze()
+    return np.log((p / p.sum()) / (q / q.sum()))
+
 def calc_r(y_i, x, y, mode='nb'):
     if mode == 'nb':
-        x = x.sign()
-        p = x[np.argwhere(y == y_i)[:,0]].sum(axis=0) + 1
-        q = x[np.argwhere(y != y_i)[:,0]].sum(axis=0) + 1
-        p, q = np.asarray(p).squeeze(), np.asarray(q).squeeze()
-        return np.log((p / p.sum()) / (q / q.sum()))
-    elif mode == 'random':
-        return np.random.normal(0, 1e-1, x.shape[1])
+        return _calc_nb(y_i, x, y)
+    elif mode == 'one':
+        return np.ones(x.shape[1]) # * _calc_nb(y_i, x, y).mean()
     else:
         raise Exception('unknown mode=%s' % mode)
 
@@ -107,20 +110,43 @@ data = {
 }
 data = {k:v.cuda() for k,v in data.items()}
 
+# >>
+with open('X_train.ft', 'w') as f:
+    for x, y in zip(X_train_words.toarray(), y_train):
+        x = ' '.join(x[x != 0].astype(str))
+        x = ' '.join(['__label__%d' % y, x])
+        _ = f.write(x + '\n')
+
+with open('X_valid.ft', 'w') as f:
+    for x, y in zip(X_valid_words.toarray(), y_valid):
+        x = ' '.join(x[x != 0].astype(str))
+        x = ' '.join(['__label__%d' % y, x])
+        _ = f.write(x + '\n')
+
+with open('X_test.ft', 'w') as f:
+    for x, y in zip(X_test_words.toarray(), y_test):
+        x = ' '.join(x[x != 0].astype(str))
+        x = ' '.join(['__label__%d' % y, x])
+        _ = f.write(x + '\n')
+
+# <<
+
+
 # --
 # Model definition
 
-# def loss_fn(x, y):
-#     x = 2 * x
-#     y = y.float()
-#     return (F.softplus(-x.abs()) + x * ((x > 0).float() - y)).mean()
-
 def loss_fn(x, y):
-    return F.binary_cross_entropy(F.sigmoid(2 * x), y.float())
+    # Numerically stable way to compute this
+    x = 2 * x
+    y = y.float()
+    return (F.softplus(-x.abs()) + x * ((x > 0).float() - y)).mean()
+
+# def loss_fn(x, y):
+#     return F.binary_cross_entropy(F.sigmoid(2 * x), y.float())
 
 
 class DotProdNB(nn.Module):
-    def __init__(self, vocab_size, r, w_adj=0.4, r_adj=10):
+    def __init__(self, vocab_size, meta):
         
         super().__init__()
         
@@ -129,10 +155,9 @@ class DotProdNB(nn.Module):
         self.w_weight[0] = 0
         self.w_weight    = nn.Parameter(self.w_weight)
         
-        self.r_weight = r
-        
-        self.w_adj = w_adj
-        self.r_adj = r_adj
+        self.r_weight = meta[2:]
+        self.w_adj    = meta[0]
+        self.r_adj    = meta[1]
         
     def forward(self, feat_idx):
         n_docs, n_words = feat_idx.shape
@@ -157,12 +182,12 @@ class DotProdNB(nn.Module):
 # Define model
 
 def make_hparams(lr_init, mo_init, num_iters, n_groups, mode='nb'):
-    r = np.hstack([[0.0], calc_r(1, X_train, y_train, mode=mode)])
+    meta = np.hstack([[0.4, 10], [0.0], calc_r(1, X_train, y_train, mode=mode)])
     
     return {
-        "lrs" : torch.FloatTensor(np.full((num_iters, n_groups), lr_init)).cuda(),
-        "mos" : torch.FloatTensor(np.full((num_iters, n_groups), mo_init)).cuda(),
-        "r"   : torch.FloatTensor(r).cuda(),
+        "lrs"  : torch.FloatTensor(np.full((num_iters, n_groups), lr_init)).cuda(),
+        "mos"  : torch.FloatTensor(np.full((num_iters, n_groups), mo_init)).cuda(),
+        "meta" : torch.FloatTensor(meta).cuda(),
     }
 
 # --
@@ -173,14 +198,14 @@ hparams = make_hparams(
     mo_init=args.mo_init,
     num_iters=args.num_iters,
     n_groups=1,
-    mode='nb' if not args.one_r else 'random',
+    mode='nb' if not args.one_r else 'one',
 )
 
 hparams['lrs'].requires_grad_(args.learn_lrs)
 hparams['mos'].requires_grad_(args.learn_mos)
-hparams['r'].requires_grad_(args.learn_meta)
+hparams['meta'].requires_grad_(args.learn_meta)
 
-net = DotProdNB(args.vocab_size, r=hparams['r']).cuda()
+net = DotProdNB(args.vocab_size, meta=hparams['meta']).cuda()
 
 params = [h for h in hparams.values() if h.requires_grad]
 if args.learn_init:
@@ -207,7 +232,7 @@ for meta_iter in range(args.meta_iters):
         hparams={
             "lrs"  : hparams['lrs'].clamp(min=1e-5, max=10),
             "mos"  : 1 - 10 ** hparams['mos'].clamp(max=0),
-            "meta" : hparams['r'] if args.learn_meta else None,
+            "meta" : hparams['meta'] if args.learn_meta else None,
         },
         params=net.parameters(),
         num_iters=args.num_iters, 

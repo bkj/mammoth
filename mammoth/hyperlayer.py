@@ -89,7 +89,7 @@ class HyperLayer(nn.Module):
         _ = self.net.train()
         
         # If learning something, go backwards.  Otherwise, there's no point.
-        if (learn_lrs or learn_mos or learn_meta or learn_init):
+        if (learn_lrs or learn_mos or learn_meta or learn_init or untrain):
             
             # Save trained state
             state = deepcopy(self.net.state_dict())

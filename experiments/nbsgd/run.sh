@@ -70,7 +70,7 @@ CUDA_VISIBLE_DEVICES=3 python nbsgd.py --verbose \
 # Regular training (w/ mildly tuned parameters)
 CUDA_VISIBLE_DEVICES=0 python nbsgd.py --verbose \
     --mo-init -1 \
-    --lr-init 0.1 | tee results/normal-lr10-mo90.jl
+    --lr-init 0.1 | tee results/normal-lr10-mo90.2.jl
 
 # Learn everything
 CUDA_VISIBLE_DEVICES=1 python nbsgd.py --verbose \
@@ -81,7 +81,7 @@ CUDA_VISIBLE_DEVICES=1 python nbsgd.py --verbose \
     --learn-meta \
     --lr-init 0.1 \
     --mo-init -1 \
-    --hyper-lr 0.1 | tee results/all-lr10-mo90.jl
+    --hyper-lr 0.1 | tee results/all-lr10-mo90.2.jl
 
 # Learn just meta+init
 CUDA_VISIBLE_DEVICES=2 python nbsgd.py --verbose \
@@ -90,7 +90,7 @@ CUDA_VISIBLE_DEVICES=2 python nbsgd.py --verbose \
     --learn-meta \
     --lr-init 0.1 \
     --mo-init -1 \
-    --hyper-lr 0.1 | tee results/meta-lr10-mo90.jl
+    --hyper-lr 0.1 | tee results/meta-lr10-mo90.2.jl
 
 # Just lr+mo
 CUDA_VISIBLE_DEVICES=3 python nbsgd.py --verbose \
@@ -100,17 +100,41 @@ CUDA_VISIBLE_DEVICES=3 python nbsgd.py --verbose \
     --learn-mos \
     --lr-init 0.1 \
     --mo-init -1 \
-    --hyper-lr 0.1 | tee results/lrmo-lr10-mo90.jl
+    --hyper-lr 0.1 | tee results/lrmo-lr10-mo90.2.jl
 
+# >>
+
+
+# Just lr+mo
+CUDA_VISIBLE_DEVICES=3 python nbsgd.py --verbose \
+    --untrain \
+    --learn-init \
+    --learn-lrs \
+    --learn-mos \
+    --lr-init 0.1 \
+    --mo-init -1 \
+    --hyper-lr 0.1 | tee results/test.jl
+
+
+# <<
 
 # --
 # Experiments (round 3)
 
 CUDA_VISIBLE_DEVICES=0 python nbsgd.py --verbose \
     --one-r \
-    --mo-init -2 | tee results/normal-oner.1.jl
+    --lr-init 0.7 \
+    --mo-init -2 | tee results/normal-oner-lr070.jl
 
+CUDA_VISIBLE_DEVICES=0 python nbsgd.py --verbose \
+    --one-r \
+    --lr-init 0.5 \
+    --mo-init -2 | tee results/normal-oner-lr050.jl
 
+CUDA_VISIBLE_DEVICES=0 python nbsgd.py --verbose \
+    --one-r \
+    --lr-init 0.25 \
+    --mo-init -2 | tee results/normal-oner-lr025.jl
 
 # Learn everything
 CUDA_VISIBLE_DEVICES=1 python nbsgd.py --verbose \
@@ -140,9 +164,101 @@ CUDA_VISIBLE_DEVICES=3 python nbsgd.py --verbose \
     --learn-mos \
     --mo-init -2 \
     --one-r \
-    --hyper-lr 0.1 | tee results/lrmo-oner.1.jl
+    --hyper-lr 0.1 | tee results/lrmo-oner.jl
+
+# --
+# Experiments (round 4)
+
+# (Much smaller batch size than above)
+CUDA_VISIBLE_DEVICES=0 python nbsgd.py --verbose \
+    --one-r \
+    --batch-size 10 \
+    --num-iters 2500 \
+    --mo-init -1 | tee results/normal-oner-bs10.jl
+
+CUDA_VISIBLE_DEVICES=0 python nbsgd.py --verbose \
+    --batch-size 10 \
+    --num-iters 2500 \
+    --mo-init -1 | tee results/normal-bs10.jl
 
 
+CUDA_VISIBLE_DEVICES=1 python nbsgd.py --verbose \
+    --one-r \
+    --batch-size 10 \
+    --num-iters 2500 \
+    --mo-init -1 \
+    --untrain \
+    --learn-init \
+    --learn-lrs \
+    --learn-mos \
+    --learn-meta \
+    --hyper-lr 0.1 | tee results/all-oner-bs10.jl
+
+# Don't learn init -- just learn a single good epoch
+CUDA_VISIBLE_DEVICES=7 python nbsgd.py --verbose \
+    --batch-size 10 \
+    --num-iters 2500 \
+    --mo-init -1 \
+    --untrain \
+    --learn-lrs \
+    --learn-mos \
+    --learn-meta \
+    --hyper-lr 0.1 | tee results/meta-oner-bs10-single.jl
+
+CUDA_VISIBLE_DEVICES=1 python nbsgd.py --verbose \
+    --one-r \
+    --batch-size 10 \
+    --num-iters 2500 \
+    --mo-init -1 \
+    --untrain \
+    --learn-init \
+    --learn-lrs \
+    --learn-mos \
+    --learn-meta \
+    --hyper-lr 0.05 | tee results/all-oner-bs10-hlr005.jl
+
+CUDA_VISIBLE_DEVICES=0 python nbsgd.py --verbose \
+    --one-r \
+    --batch-size 10 \
+    --num-iters 2500 \
+    --mo-init -1 \
+    --untrain \
+    --learn-init \
+    --learn-lrs \
+    --learn-mos \
+    --learn-meta \
+    --hyper-lr 0.01 | tee results/all-oner-bs10-hlr001.jl
+
+CUDA_VISIBLE_DEVICES=1 python nbsgd.py --verbose \
+    --batch-size 10 \
+    --num-iters 2500 \
+    --mo-init -1 \
+    --untrain \
+    --learn-init \
+    --learn-lrs \
+    --learn-mos \
+    --learn-meta \
+    --hyper-lr 0.1 | tee results/all-bs10.jl
 
 
+CUDA_VISIBLE_DEVICES=1 python nbsgd.py --verbose \
+    --batch-size 10 \
+    --num-iters 2500 \
+    --mo-init -1 \
+    --untrain \
+    --learn-init \
+    --learn-lrs \
+    --learn-mos \
+    --learn-meta \
+    --hyper-lr 0.05 | tee results/all-bs10-hlr005.jl
 
+CUDA_VISIBLE_DEVICES=2 python nbsgd.py --verbose \
+    --batch-size 10 \
+    --num-iters 2500 \
+    --mo-init -1 \
+    --untrain \
+    --learn-init \
+    --learn-lrs \
+    --learn-mos \
+    --learn-meta \
+    --hyper-lr 0.01 | tee results/all-bs10-hlr001.jl
