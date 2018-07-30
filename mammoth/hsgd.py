@@ -97,7 +97,7 @@ class HSGD():
         lr = self._fill_parser(self.lrs[sgd_iter])
         mo = self._fill_parser(self.mos[sgd_iter])
         
-        _ = self.eV.mul(mo).sub((1.0 - mo) * flat_grad)
+        _ = self.eV.mul(mo).sub(flat_grad)
         _ = self.eX.add(lr * self.eV.val)
         _ = self._set_flat_params(self.eX.val)
     
@@ -133,17 +133,17 @@ class HSGD():
         _ = self.eX.sub(lr * self.eV.val)
         _ = self._set_flat_params(self.eX.val)
         g = self._flatten(autograd.grad(lf(), self.params, create_graph=True))
-        _ = self.eV.add((1 - mo) * g.data).unmul(mo)
+        _ = self.eV.add(g.data).unmul(mo)
         
         self.d_v += self.d_x * lr
         
         # Update mo
         if self.learn_mos:
-            tmp = self.d_v * (self.eV.val + g.data)
+            tmp = self.d_v * self.eV.val
             self.d_mos[sgd_iter] = torch.stack([tmp[offset:(offset+sz)].sum() for offset,sz in zip(self._offsets, self._szs)])
         
         # Weight gradient
-        lf_hvp = torch.dot(g, ((1 - mo) * self.d_v))
+        lf_hvp = torch.dot(g, self.d_v)
         self.d_x -= self._flatten(autograd.grad(lf_hvp, self.params, retain_graph=True)).data
         
         # Meta gradient

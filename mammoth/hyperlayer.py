@@ -46,9 +46,8 @@ class HyperLayer(nn.Module):
         
         assert len(self.params) > 0, "HyperLayer.__init__: len(params) == 0"
     
-    def run(self, data,
-        learn_lrs=True, learn_mos=True, learn_meta=True, learn_init=False,
-        szs=None, untrain=False, check_perfect=True, forward_only=False, mode='one_batch'):
+    def run(self, data, learn_lrs=True, learn_mos=True, learn_meta=True, learn_init=False,
+        szs=None, untrain=False, check_perfect=True, mode='one_batch'):
         
         _ = self.net.train()
         
@@ -89,8 +88,10 @@ class HyperLayer(nn.Module):
         test_acc = self._validate(X=X_test, y=y_test, mode=mode) if 'X_test' in data else None
         _ = self.net.train()
         
-        # Save trained state
-        if not forward_only:
+        # If learning something, go backwards.  Otherwise, there's no point.
+        if (learn_lrs or learn_mos or learn_meta or learn_init):
+            
+            # Save trained state
             state = deepcopy(self.net.state_dict())
             
             # Untrain
@@ -156,17 +157,23 @@ class HyperLayer(nn.Module):
         
         # return float(logits.mean())
         
+        def _pred(x):
+            if len(x.shape) == 2:
+                return x.max(dim=1)[1]
+            else:
+                return (x > 0).long()
+        
         if logits is None:
             if mode == 'one_batch':
                 logits = self.net(X)
-                preds = logits.max(dim=1)[1]
+                preds = _pred(logits)
                 acc = (preds == y).float().mean()
                 return float(acc)
             elif mode in set(['sample']):
                 correct, total = 0.0, 0.0
                 for Xb, yb in zip(torch.split(X, 10), torch.split(y, 10)):
                     logits = self.net(Xb)
-                    preds = logits.max(dim=1)[1]
+                    preds = _pred(logits)
                     correct += (preds == yb).float().sum()
                     total += preds.shape[0]
                 
@@ -174,7 +181,7 @@ class HyperLayer(nn.Module):
             else:
                 raise Exception
         else:
-            preds = logits.max(dim=1)[1]
+            preds = _pred(logits)
             acc = (preds == y).float().mean()
             return float(acc)
     
