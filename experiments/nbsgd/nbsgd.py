@@ -33,11 +33,13 @@ def _calc_nb(y_i, x, y):
     p = x[np.argwhere(y == y_i)[:,0]].sum(axis=0) + 1
     q = x[np.argwhere(y != y_i)[:,0]].sum(axis=0) + 1
     p, q = np.asarray(p).squeeze(), np.asarray(q).squeeze()
-    return np.log((p / p.sum()) / (q / q.sum()))
+    return (p / p.sum()) / (q / q.sum())
 
-def calc_r(y_i, x, y, mode='nb'):
-    if mode == 'nb':
-        return _calc_nb(y_i, x, y)
+def calc_r(y_i, x, y, mode='nb_log'):
+    if mode == 'nb_log':
+        return np.log(_calc_nb(y_i, x, y))
+    elif mode == 'nb_sqrt':
+        return np.sqrt(_calc_nb(y_i, x, y))
     elif mode == 'one':
         return np.ones(x.shape[1]) # * _calc_nb(y_i, x, y).mean()
     else:
@@ -146,7 +148,7 @@ def loss_fn(x, y):
 
 
 class DotProdNB(nn.Module):
-    def __init__(self, vocab_size, meta):
+    def __init__(self, vocab_size, r, meta):
         
         super().__init__()
         
@@ -155,9 +157,10 @@ class DotProdNB(nn.Module):
         self.w_weight[0] = 0
         self.w_weight    = nn.Parameter(self.w_weight)
         
-        self.r_weight = meta[2:]
-        self.w_adj    = meta[0]
-        self.r_adj    = meta[1]
+        self.meta     = meta
+        self.r_weight = r
+        self.w_adj    = 0.4
+        self.r_adj    = 10
         
     def forward(self, feat_idx):
         n_docs, n_words = feat_idx.shape
@@ -169,7 +172,8 @@ class DotProdNB(nn.Module):
         w[zero_mask] = 0
         w = w.view(n_docs, n_words)
         
-        r = self.r_weight[feat_idx]
+        weights = self.meta.exp() / self.meta.exp().sum()
+        r = (self.r_weight[feat_idx] * weights).sum(dim=-1)
         r[zero_mask] = 0
         r = r.view(n_docs, n_words)
         
@@ -181,13 +185,11 @@ class DotProdNB(nn.Module):
 # --
 # Define model
 
-def make_hparams(lr_init, mo_init, num_iters, n_groups, mode='nb'):
-    meta = np.hstack([[0.4, 10], [0.0], calc_r(1, X_train, y_train, mode=mode)])
-    
+def make_hparams(lr_init, mo_init, num_iters, n_groups):
     return {
         "lrs"  : torch.FloatTensor(np.full((num_iters, n_groups), lr_init)).cuda(),
         "mos"  : torch.FloatTensor(np.full((num_iters, n_groups), mo_init)).cuda(),
-        "meta" : torch.FloatTensor(meta).cuda(),
+        "meta" : torch.FloatTensor([[1, -1]]).cuda(),
     }
 
 # --
@@ -198,14 +200,18 @@ hparams = make_hparams(
     mo_init=args.mo_init,
     num_iters=args.num_iters,
     n_groups=1,
-    mode='nb' if not args.one_r else 'one',
 )
 
 hparams['lrs'].requires_grad_(args.learn_lrs)
 hparams['mos'].requires_grad_(args.learn_mos)
 hparams['meta'].requires_grad_(args.learn_meta)
 
-net = DotProdNB(args.vocab_size, meta=hparams['meta']).cuda()
+r_log  = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='nb_log')])
+r_sqrt = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='nb_sqrt')])
+r      = np.column_stack([r_log, r_sqrt])
+r      = torch.FloatTensor(r).cuda()
+
+net = DotProdNB(args.vocab_size, r=r, meta=hparams['meta']).cuda()
 
 params = [h for h in hparams.values() if h.requires_grad]
 if args.learn_init:
@@ -252,6 +258,8 @@ for meta_iter in range(args.meta_iters):
     
     if hopt is not None:
         _ = hopt.step()
+    
+    print(F.softmax(hparams['meta'], dim=-1), file=sys.stderr)
     
     print(json.dumps({
         "meta_iter" : meta_iter,
