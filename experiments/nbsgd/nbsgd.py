@@ -189,7 +189,7 @@ def make_hparams(lr_init, mo_init, num_iters, n_groups):
     return {
         "lrs"  : torch.FloatTensor(np.full((num_iters, n_groups), lr_init)).cuda(),
         "mos"  : torch.FloatTensor(np.full((num_iters, n_groups), mo_init)).cuda(),
-        "meta" : torch.FloatTensor([[1, -1]]).cuda(),
+        "meta" : torch.FloatTensor([[0, 0, 0]]).cuda(),
     }
 
 # --
@@ -208,7 +208,8 @@ hparams['meta'].requires_grad_(args.learn_meta)
 
 r_log  = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='nb_log')])
 r_sqrt = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='nb_sqrt')])
-r      = np.column_stack([r_log, r_sqrt])
+r_one  = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='one')])
+r      = np.column_stack([r_log, r_sqrt, r_one])
 r      = torch.FloatTensor(r).cuda()
 
 net = DotProdNB(args.vocab_size, r=r, meta=hparams['meta']).cuda()
