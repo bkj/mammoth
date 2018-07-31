@@ -110,26 +110,26 @@ data = {
 }
 data = {k:v.cuda() for k,v in data.items()}
 
-# >>
-with open('X_train.ft', 'w') as f:
-    for x, y in zip(X_train_words.toarray(), y_train):
-        x = ' '.join(x[x != 0].astype(str))
-        x = ' '.join(['__label__%d' % y, x])
-        _ = f.write(x + '\n')
+# # >>
+# with open('X_train.ft', 'w') as f:
+#     for x, y in zip(X_train_words.toarray(), y_train):
+#         x = ' '.join(x[x != 0].astype(str))
+#         x = ' '.join(['__label__%d' % y, x])
+#         _ = f.write(x + '\n')
 
-with open('X_valid.ft', 'w') as f:
-    for x, y in zip(X_valid_words.toarray(), y_valid):
-        x = ' '.join(x[x != 0].astype(str))
-        x = ' '.join(['__label__%d' % y, x])
-        _ = f.write(x + '\n')
+# with open('X_valid.ft', 'w') as f:
+#     for x, y in zip(X_valid_words.toarray(), y_valid):
+#         x = ' '.join(x[x != 0].astype(str))
+#         x = ' '.join(['__label__%d' % y, x])
+#         _ = f.write(x + '\n')
 
-with open('X_test.ft', 'w') as f:
-    for x, y in zip(X_test_words.toarray(), y_test):
-        x = ' '.join(x[x != 0].astype(str))
-        x = ' '.join(['__label__%d' % y, x])
-        _ = f.write(x + '\n')
+# with open('X_test.ft', 'w') as f:
+#     for x, y in zip(X_test_words.toarray(), y_test):
+#         x = ' '.join(x[x != 0].astype(str))
+#         x = ' '.join(['__label__%d' % y, x])
+#         _ = f.write(x + '\n')
 
-# <<
+# # <<
 
 
 # --

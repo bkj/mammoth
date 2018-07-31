@@ -70,7 +70,7 @@ CUDA_VISIBLE_DEVICES=3 python nbsgd.py --verbose \
 # Regular training (w/ mildly tuned parameters)
 CUDA_VISIBLE_DEVICES=0 python nbsgd.py --verbose \
     --mo-init -1 \
-    --lr-init 0.1 | tee results/normal-lr10-mo90.2.jl
+    --lr-init 0.02 | tee results/normal-lr10-mo90.2.jl
 
 # Learn everything
 CUDA_VISIBLE_DEVICES=1 python nbsgd.py --verbose \
@@ -81,7 +81,7 @@ CUDA_VISIBLE_DEVICES=1 python nbsgd.py --verbose \
     --learn-meta \
     --lr-init 0.1 \
     --mo-init -1 \
-    --hyper-lr 0.1 | tee results/all-lr10-mo90.2.jl
+    --hyper-lr 0.1 | tee results/all-lr10-mo90.3.jl
 
 # Learn just meta+init
 CUDA_VISIBLE_DEVICES=2 python nbsgd.py --verbose \
