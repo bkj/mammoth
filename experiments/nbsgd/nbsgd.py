@@ -28,10 +28,10 @@ warnings.simplefilter(action='ignore', category=FutureWarning)
 # --
 # Helpers
 
-def _calc_nb(y_i, x, y):
+def _calc_nb(y_i, x, y, alpha=1):
     x = x.sign()
-    p = x[np.argwhere(y == y_i)[:,0]].sum(axis=0) + 1
-    q = x[np.argwhere(y != y_i)[:,0]].sum(axis=0) + 1
+    p = x[np.argwhere(y == y_i)[:,0]].sum(axis=0) + alpha
+    q = x[np.argwhere(y != y_i)[:,0]].sum(axis=0) + alpha
     p, q = np.asarray(p).squeeze(), np.asarray(q).squeeze()
     return (p / p.sum()) / (q / q.sum())
 
@@ -100,7 +100,7 @@ X_test        = np.load(args.x_test).item()
 X_test_words  = np.load(args.x_test_words).item()
 y_test        = np.load(args.y_test)
 
-X_valid_words, X_test_words, y_valid, y_test = train_test_split(X_test_words, y_test, train_size=0.5)
+X_train, X_valid, X_train_words, X_valid_words, y_train, y_valid = train_test_split(X_train, X_train_words, y_train, train_size=0.9)
 
 data = {
     "X_train" : torch.from_numpy(X_train_words.toarray()).long(),
@@ -189,7 +189,7 @@ def make_hparams(lr_init, mo_init, num_iters, n_groups):
     return {
         "lrs"  : torch.FloatTensor(np.full((num_iters, n_groups), lr_init)).cuda(),
         "mos"  : torch.FloatTensor(np.full((num_iters, n_groups), mo_init)).cuda(),
-        "meta" : torch.FloatTensor([[0, 0, 0]]).cuda(),
+        "meta" : torch.FloatTensor([[0] * 6]).cuda(),
     }
 
 # --
@@ -206,11 +206,19 @@ hparams['lrs'].requires_grad_(args.learn_lrs)
 hparams['mos'].requires_grad_(args.learn_mos)
 hparams['meta'].requires_grad_(args.learn_meta)
 
-r_log  = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='nb_log')])
-r_sqrt = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='nb_sqrt')])
-r_one  = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='one')])
-r      = np.column_stack([r_log, r_sqrt, r_one])
-r      = torch.FloatTensor(r).cuda()
+# r_log  = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='nb_log')])
+# r_sqrt = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='nb_sqrt')])
+# r_one  = np.hstack([[0.0], calc_r(1, X_train, y_train, mode='one')])
+# r      = np.column_stack([r_log, r_sqrt, r_one])
+r = np.column_stack([
+    np.hstack([[0.0], np.log(_calc_nb(1, X_train, y_train, alpha=0.1))]),
+    np.hstack([[0.0], np.log(_calc_nb(1, X_train, y_train, alpha=1))]),
+    np.hstack([[0.0], np.log(_calc_nb(1, X_train, y_train, alpha=2))]),
+    np.hstack([[0.0], np.log(_calc_nb(1, X_train, y_train, alpha=4))]),
+    np.hstack([[0.0], np.log(_calc_nb(1, X_train, y_train, alpha=8))]),
+    np.hstack([[0.0], np.log(_calc_nb(1, X_train, y_train, alpha=16))]),
+])
+r = torch.FloatTensor(r).cuda()
 
 net = DotProdNB(args.vocab_size, r=r, meta=hparams['meta']).cuda()
 
