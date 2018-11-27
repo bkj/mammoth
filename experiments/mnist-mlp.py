@@ -138,7 +138,7 @@ hparams = make_hparams()
 
 hopt = LambdaAdam(
     params=hparams.values(),
-    lr=0.001, #hyper_lr
+    lr=hyper_lr
 )
 
 hist = defaultdict(list)

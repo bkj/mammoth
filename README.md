@@ -10,6 +10,8 @@ Research code under active development.  Open issues if necessary.
 conda create -n mammoth_env python=3.6 pip -y
 source activate mammoth_env
 conda install pytorch torchvision cuda91 -c pytorch -y
+pip install -r requirements.txt
+pip install -e .
 ```
 
 #### Usage
